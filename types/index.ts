@@ -14,7 +14,7 @@ export interface Lowisko {
   nazwa: string;
   lokalizacja: GeoPoint;
   opis: string;
-  geojson_url?: string; // URL do GeoJSON w Firebase Storage
+  geojson_url?: string; // ścieżka do pliku w /public/geojson/ np. "/geojson/uroczysko.geojson"
 }
 
 export interface Stanowisko {
@@ -30,6 +30,9 @@ export interface Post {
   user_id: string;
   stanowisko_id: string;
   lowisko_id: string;
+  lokalizacja_nazwa?: string;
+  lat?: number;
+  lng?: number;
   typ_ryby: string;
   nazwa_ryby: string;
   zdjecia: string[];

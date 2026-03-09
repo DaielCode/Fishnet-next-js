@@ -2,19 +2,34 @@
 
 import { useState, useRef } from "react";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage, auth } from "@/lib/firebase";
-import type { Stanowisko, Lowisko } from "@/types";
+import { db, auth } from "@/lib/firebase";
 
 const TYPY_RYB = ["Karp", "Szczupak", "Okoń", "Lin", "Amur", "Sum", "Płoć", "Leszcz", "Sandacz", "Inne"];
 
+async function uploadToCloudinary(plik: File): Promise<string> {
+  const formData = new FormData();
+  formData.append("file", plik);
+  formData.append("upload_preset", process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!);
+  const res = await fetch(
+    `https://api.cloudinary.com/v1_1/${process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME}/image/upload`,
+    { method: "POST", body: formData }
+  );
+  if (!res.ok) throw new Error("Błąd uploadu zdjęcia");
+  const data = await res.json();
+  return data.secure_url as string;
+}
+
 interface Props {
-  stanowisko: Stanowisko;
-  lowisko: Lowisko;
+  lokalizacja: {
+    nazwa: string;
+    lowisko_id: string;
+    stanowisko_id: string;
+    numer?: number;
+  };
   onClose: () => void;
 }
 
-export default function DodajPostModal({ stanowisko, lowisko, onClose }: Props) {
+export default function DodajPostModal({ lokalizacja, onClose }: Props) {
   const [typRyby, setTypRyby] = useState("");
   const [nazwaRyby, setNazwaRyby] = useState("");
   const [opis, setOpisState] = useState("");
@@ -30,22 +45,17 @@ export default function DodajPostModal({ stanowisko, lowisko, onClose }: Props) 
     setLoading(true);
 
     try {
-      const uid = auth.currentUser.uid;
-      const postId = Date.now().toString();
-
-      // Upload zdjęć (resize w przeglądarce — max 1MB)
       const zdjeciaUrls: string[] = [];
       for (const plik of zdjecia) {
-        const storageRef = ref(storage, `posty/${uid}/${postId}/${plik.name}`);
-        await uploadBytes(storageRef, plik);
-        const url = await getDownloadURL(storageRef);
+        const url = await uploadToCloudinary(plik);
         zdjeciaUrls.push(url);
       }
 
       await addDoc(collection(db, "posty"), {
-        user_id: uid,
-        stanowisko_id: stanowisko.id,
-        lowisko_id: stanowisko.lowisko_id,
+        user_id: auth.currentUser.uid,
+        stanowisko_id: lokalizacja.stanowisko_id,
+        lowisko_id: lokalizacja.lowisko_id,
+        lokalizacja_nazwa: lokalizacja.nazwa,
         typ_ryby: typRyby,
         nazwa_ryby: nazwaRyby,
         zdjecia: zdjeciaUrls,
@@ -62,6 +72,10 @@ export default function DodajPostModal({ stanowisko, lowisko, onClose }: Props) 
     }
   }
 
+  const naglowekLokalizacji = lokalizacja.numer
+    ? `Stanowisko ${lokalizacja.numer} · ${lokalizacja.nazwa}`
+    : lokalizacja.nazwa;
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000] p-4">
       <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
@@ -69,9 +83,7 @@ export default function DodajPostModal({ stanowisko, lowisko, onClose }: Props) 
           <div className="flex justify-between items-center mb-4">
             <div>
               <h2 className="text-lg font-bold">Dodaj połów</h2>
-              <p className="text-sm text-gray-500">
-                Stanowisko {stanowisko.numer} · {lowisko.nazwa}
-              </p>
+              <p className="text-sm text-gray-500">{naglowekLokalizacji}</p>
             </div>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl">×</button>
           </div>

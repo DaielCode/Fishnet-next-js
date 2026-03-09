@@ -4,23 +4,52 @@ import dynamic from "next/dynamic";
 import { useState } from "react";
 import type { Stanowisko, Lowisko } from "@/types";
 
-// Leaflet nie działa SSR — ładujemy tylko po stronie klienta
 const MapView = dynamic(() => import("@/components/map/MapView"), { ssr: false });
-const DodajPostModal = dynamic(() => import("@/components/map/DodajPostModal"), { ssr: false });
+const DodajPostFeedModal = dynamic(() => import("@/components/feed/DodajPostFeedModal"), { ssr: false });
+
+interface Lokalizacja {
+  nazwa: string;
+  lowisko_id: string;
+  stanowisko_id: string;
+  lat?: number;
+  lng?: number;
+  numer?: number;
+}
 
 export default function MapaPage() {
-  const [selected, setSelected] = useState<{ stanowisko: Stanowisko; lowisko: Lowisko } | null>(null);
+  const [lokalizacja, setLokalizacja] = useState<Lokalizacja | null>(null);
+
+  function handleStanowiskoClick(stanowisko: Stanowisko, lowisko: Lowisko) {
+    setLokalizacja({
+      nazwa: lowisko.nazwa,
+      lowisko_id: lowisko.id,
+      stanowisko_id: stanowisko.id,
+      lat: stanowisko.wspolrzedne.latitude,
+      lng: stanowisko.wspolrzedne.longitude,
+      numer: stanowisko.numer,
+    });
+  }
+
+  function handleLowiskoClick(info: { nazwa: string; lowisko_id: string; lat: number; lng: number }) {
+    setLokalizacja({
+      nazwa: info.nazwa,
+      lowisko_id: info.lowisko_id,
+      stanowisko_id: "",
+      lat: info.lat,
+      lng: info.lng,
+    });
+  }
 
   return (
     <div className="relative w-full" style={{ height: "calc(100vh - 57px)" }}>
       <MapView
-        onStanowiskoClick={(stanowisko, lowisko) => setSelected({ stanowisko, lowisko })}
+        onStanowiskoClick={handleStanowiskoClick}
+        onLowiskoClick={handleLowiskoClick}
       />
-      {selected && (
-        <DodajPostModal
-          stanowisko={selected.stanowisko}
-          lowisko={selected.lowisko}
-          onClose={() => setSelected(null)}
+      {lokalizacja && (
+        <DodajPostFeedModal
+          lokalizacja={lokalizacja}
+          onClose={() => setLokalizacja(null)}
         />
       )}
     </div>

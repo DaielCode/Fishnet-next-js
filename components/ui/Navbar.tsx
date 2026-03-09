@@ -36,7 +36,7 @@ export default function Navbar() {
             </Link>
             <button
               onClick={logout}
-              className="text-sm text-gray-500 hover:text-red-500"
+              className="text-sm text-gray-500 hover:text-red-500 cursor-pointer"
             >
               Wyloguj
             </button>
@@ -44,7 +44,7 @@ export default function Navbar() {
         ) : (
           <button
             onClick={loginWithGoogle}
-            className="bg-blue-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-blue-700"
+            className="bg-blue-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-blue-700 cursor-pointer"
           >
             Zaloguj przez Google
           </button>

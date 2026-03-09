@@ -4,11 +4,15 @@ import { useEffect, useState } from "react";
 import { collection, onSnapshot, orderBy, query, doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import PostCard from "@/components/feed/PostCard";
+import DodajPostFeedModal from "@/components/feed/DodajPostFeedModal";
+import { useAuth } from "@/hooks/useAuth";
 import type { Post, User } from "@/types";
 
 export default function FeedPage() {
   const [posty, setPosty] = useState<Post[]>([]);
   const [autorzy, setAutorzy] = useState<Record<string, User>>({});
+  const [modalOpen, setModalOpen] = useState(false);
+  const { user } = useAuth();
 
   useEffect(() => {
     const q = query(collection(db, "posty"), orderBy("timestamp", "desc"));
@@ -32,7 +36,18 @@ export default function FeedPage() {
 
   return (
     <div className="max-w-lg mx-auto px-4 py-6">
-      <h1 className="text-2xl font-bold mb-6">Feed</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold">Feed</h1>
+        {user && (
+          <button
+            onClick={() => setModalOpen(true)}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+          >
+            + Dodaj post
+          </button>
+        )}
+      </div>
+      {modalOpen && <DodajPostFeedModal onClose={() => setModalOpen(false)} />}
       {posty.length === 0 && (
         <p className="text-center text-gray-400 py-16">Brak postów. Bądź pierwszy!</p>
       )}
