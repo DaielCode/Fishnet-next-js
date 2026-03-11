@@ -41,7 +41,7 @@ export default function MapaPage() {
   }
 
   return (
-    <div className="relative w-full h-[calc(100vh-121px)] sm:h-[calc(100vh-57px)]">
+    <div className="fixed inset-x-0 top-[57px] bottom-[64px] sm:bottom-0">
       <Suspense fallback={null}>
       <MapView
         onStanowiskoClick={handleStanowiskoClick}

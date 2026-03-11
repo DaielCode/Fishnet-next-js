@@ -42,9 +42,7 @@ export function useAuth() {
       const result = await signInWithPopup(auth, googleProvider);
       await saveUserIfNew(result.user);
     } catch (err: any) {
-      if (err?.code !== "auth/cancelled-popup-request" && err?.code !== "auth/popup-closed-by-user") {
-        console.error("loginWithGoogle error:", err);
-      }
+      console.error("loginWithGoogle error:", err?.code, err?.message);
     }
   }
 

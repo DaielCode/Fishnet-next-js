@@ -4,10 +4,12 @@ import { useAuth } from "@/hooks/useAuth";
 import { useLanguage } from "@/context/LanguageContext";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 export default function ProfilPage() {
-  const { user, loading, loginWithGoogle } = useAuth();
+  const { user, loading, loginWithGoogle, logout } = useAuth();
   const { t } = useLanguage();
+  const router = useRouter();
 
   if (loading) return <div className="text-center py-16 text-gray-400">{t.profile.loading}</div>;
 
@@ -49,6 +51,13 @@ export default function ProfilPage() {
           {t.profile.seeFeed}
         </Link>
       </div>
+
+      <button
+        onClick={async () => { await logout(); router.push("/"); }}
+        className="sm:hidden mt-4 w-full py-3 rounded-xl text-red-500 border border-red-200 font-medium hover:bg-red-50"
+      >
+        {t.nav.logout}
+      </button>
     </div>
   );
 }
