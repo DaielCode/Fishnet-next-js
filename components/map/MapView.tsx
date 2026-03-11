@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { MapContainer, TileLayer, GeoJSON, Marker, Popup } from "react-leaflet";
+import { useEffect, useRef, useState } from "react";
+import { MapContainer, TileLayer, GeoJSON, Marker, Popup, Tooltip, useMap } from "react-leaflet";
+import { useSearchParams } from "next/navigation";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -9,6 +10,7 @@ import "react-leaflet-cluster/dist/assets/MarkerCluster.css";
 import "react-leaflet-cluster/dist/assets/MarkerCluster.Default.css";
 import { collection, getDocs, onSnapshot, orderBy, query } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { useLanguage } from "@/context/LanguageContext";
 import type { Stanowisko, Lowisko, Post } from "@/types";
 
 // Fix domyślnych ikon Leaflet
@@ -58,6 +60,41 @@ interface LowiskoKlik {
   lng: number;
 }
 
+function MapController({ clusterRef }: { clusterRef: React.MutableRefObject<any> }) {
+  const map = useMap();
+  const params = useSearchParams();
+  const lat = parseFloat(params.get("lat") ?? "");
+  const lng = parseFloat(params.get("lng") ?? "");
+
+  useEffect(() => {
+    if (isNaN(lat) || isNaN(lng)) return;
+
+    map.flyTo([lat, lng], 17, { duration: 1.2 });
+
+    const onMoveEnd = () => {
+      const cluster = clusterRef.current;
+      if (!cluster) return;
+
+      const layers = (cluster.getLayers?.() ?? []) as L.Marker[];
+      const target = layers.find((m: L.Marker) => {
+        const pos = m.getLatLng();
+        return Math.abs(pos.lat - lat) < 0.00001 && Math.abs(pos.lng - lng) < 0.00001;
+      });
+
+      if (!target) return;
+
+      cluster.zoomToShowLayer(target, () => {
+        setTimeout(() => target.openTooltip(), 100);
+      });
+    };
+
+    map.once("moveend", onMoveEnd);
+    return () => { map.off("moveend", onMoveEnd); };
+  }, [lat, lng, map]);
+
+  return null;
+}
+
 interface Props {
   onStanowiskoClick?: (stanowisko: Stanowisko, lowisko: Lowisko) => void;
   onLowiskoClick?: (info: LowiskoKlik) => void;
@@ -68,6 +105,9 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
   const [lowiska, setLowiska] = useState<Lowisko[]>([]);
   const [warstwy, setWarstwy] = useState<WarstwaGeo[]>([]);
   const [postyZPinami, setPostyZPinami] = useState<Post[]>([]);
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  const clusterRef = useRef<any>(null);
+  const { t } = useLanguage();
 
   useEffect(() => {
     // Stanowiska z Firestore
@@ -115,6 +155,7 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
   }, []);
 
   return (
+    <>
     <MapContainer
       center={[49.8877, 18.9510]}
       zoom={15}
@@ -125,6 +166,7 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
+      <MapController clusterRef={clusterRef} />
 
       {/* Wszystkie warstwy GeoJSON */}
       {warstwy.map((w) => (
@@ -138,7 +180,7 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
             fillOpacity: 0.2,
           }}
           onEachFeature={(feature, layer) => {
-            const nazwa = feature.properties?.name ?? "Łowisko";
+            const nazwa = feature.properties?.name ?? t.map.fishingSpot;
             layer.on({
               click: (e) => {
                 onLowiskoClick?.({
@@ -169,7 +211,7 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
           <Marker key={s.id} position={[s.wspolrzedne.latitude, s.wspolrzedne.longitude]}>
             <Popup>
               <div className="text-sm">
-                <p className="font-bold">Stanowisko {s.numer}</p>
+                <p className="font-bold">{t.map.station} {s.numer}</p>
                 <p className="text-gray-600">{lowisko?.nazwa}</p>
                 {s.opis && <p className="mt-1">{s.opis}</p>}
                 {onStanowiskoClick && lowisko && (
@@ -177,7 +219,7 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
                     onClick={() => onStanowiskoClick(s, lowisko)}
                     className="mt-2 w-full bg-blue-600 text-white text-xs py-1 px-2 rounded hover:bg-blue-700"
                   >
-                    Dodaj połów
+                    {t.map.addCatch}
                   </button>
                 )}
               </div>
@@ -188,6 +230,7 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
 
       {/* Piny postów z grupowaniem */}
       <MarkerClusterGroup
+        ref={clusterRef}
         chunkedLoading
         iconCreateFunction={(cluster: { getChildCount: () => number }) => L.divIcon({
           html: `<div style="background:#2563eb;color:white;border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.35);">${cluster.getChildCount()}</div>`,
@@ -200,13 +243,14 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
       >
         {postyZPinami.map((post) => (
           <Marker key={post.id} position={[post.lat!, post.lng!]} icon={ikonaPosta}>
-            <Popup>
+            <Tooltip direction="top" offset={[0, -20]} opacity={1} interactive>
               <div style={{ fontSize: 13, minWidth: 180 }}>
                 {post.zdjecia?.[0] && (
                   <img
                     src={post.zdjecia[0]}
                     alt="połów"
-                    style={{ width: "100%", height: 90, objectFit: "cover", borderRadius: 6, marginBottom: 8 }}
+                    onClick={() => setLightbox(post.zdjecia[0])}
+                    style={{ width: "100%", height: 90, objectFit: "cover", borderRadius: 6, marginBottom: 8, cursor: "zoom-in" }}
                   />
                 )}
                 <p style={{ fontWeight: 700, margin: "0 0 4px" }}>
@@ -221,13 +265,45 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
                   href={`/feed?post=${post.id}`}
                   style={{ display: "block", marginTop: 8, background: "#2563eb", color: "#fff", textAlign: "center", padding: "6px 8px", borderRadius: 6, textDecoration: "none", fontSize: 12, fontWeight: 600 }}
                 >
-                  Zobacz post →
+                  {t.map.seePost}
                 </a>
                 <button
-                  onClick={() => onLowiskoClick?.({ nazwa: post.lokalizacja_nazwa || "Łowisko", lowisko_id: post.lowisko_id, lat: post.lat!, lng: post.lng! })}
+                  onClick={() => onLowiskoClick?.({ nazwa: post.lokalizacja_nazwa || t.map.fishingSpot, lowisko_id: post.lowisko_id, lat: post.lat!, lng: post.lng! })}
                   style={{ display: "block", width: "100%", marginTop: 6, background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac", textAlign: "center", padding: "6px 8px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}
                 >
-                  + Dodaj post w tym miejscu
+                  {t.map.addPostHere}
+                </button>
+              </div>
+            </Tooltip>
+            <Popup>
+              <div style={{ fontSize: 13, minWidth: 180 }}>
+                {post.zdjecia?.[0] && (
+                  <img
+                    src={post.zdjecia[0]}
+                    alt="połów"
+                    onClick={() => setLightbox(post.zdjecia[0])}
+                    style={{ width: "100%", height: 90, objectFit: "cover", borderRadius: 6, marginBottom: 8, cursor: "zoom-in" }}
+                  />
+                )}
+                <p style={{ fontWeight: 700, margin: "0 0 4px" }}>
+                  {post.typ_ryby}{post.nazwa_ryby ? ` — ${post.nazwa_ryby}` : ""}
+                </p>
+                {post.waga_kg && <p style={{ color: "#6b7280", margin: "2px 0" }}>⚖️ {post.waga_kg} kg</p>}
+                {post.dlugosc_cm && <p style={{ color: "#6b7280", margin: "2px 0" }}>📏 {post.dlugosc_cm} cm</p>}
+                {post.opis && (
+                  <p style={{ color: "#374151", margin: "6px 0" }}>{post.opis}</p>
+                )}
+                <a
+                  href={`/feed?post=${post.id}`}
+                  style={{ display: "block", marginTop: 8, background: "#2563eb", color: "#fff", textAlign: "center", padding: "6px 8px", borderRadius: 6, textDecoration: "none", fontSize: 12, fontWeight: 600 }}
+                >
+                  {t.map.seePost}
+                </a>
+                <button
+                  onClick={() => onLowiskoClick?.({ nazwa: post.lokalizacja_nazwa || t.map.fishingSpot, lowisko_id: post.lowisko_id, lat: post.lat!, lng: post.lng! })}
+                  style={{ display: "block", width: "100%", marginTop: 6, background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac", textAlign: "center", padding: "6px 8px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+                >
+                  {t.map.addPostHere}
                 </button>
               </div>
             </Popup>
@@ -235,5 +311,19 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
         ))}
       </MarkerClusterGroup>
     </MapContainer>
+
+      {lightbox && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, cursor: "zoom-out" }}
+          onClick={() => setLightbox(null)}
+        >
+          <img
+            src={lightbox}
+            alt="Zdjęcie połowu"
+            style={{ maxWidth: "100%", maxHeight: "90vh", borderRadius: 12, objectFit: "contain" }}
+          />
+        </div>
+      )}
+    </>
   );
 }

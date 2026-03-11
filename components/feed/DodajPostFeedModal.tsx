@@ -2,19 +2,15 @@
 
 import { useState, useRef, useEffect } from "react";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
-import { db, auth } from "@/lib/firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db, auth, storage } from "@/lib/firebase";
+import { useLanguage } from "@/context/LanguageContext";
 
-async function uploadToCloudinary(plik: File): Promise<string> {
-  const formData = new FormData();
-  formData.append("file", plik);
-  formData.append("upload_preset", process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!);
-  const res = await fetch(
-    `https://api.cloudinary.com/v1_1/${process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME}/image/upload`,
-    { method: "POST", body: formData }
-  );
-  if (!res.ok) throw new Error("Błąd uploadu zdjęcia");
-  const data = await res.json();
-  return data.secure_url as string;
+async function uploadToStorage(plik: File, uid: string): Promise<string> {
+  const sciezka = `posty/${uid}/${Date.now()}_${plik.name}`;
+  const storageRef = ref(storage, sciezka);
+  await uploadBytes(storageRef, plik);
+  return getDownloadURL(storageRef);
 }
 
 const TYPY_RYB = [
@@ -80,9 +76,9 @@ function StepperInput({
       <button
         type="button"
         onClick={() => change(-step)}
-        className="px-4 py-3 text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors select-none text-lg leading-none cursor-pointer"
+        className="px-3 py-3 text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors select-none text-lg leading-none cursor-pointer flex-shrink-0"
       >−</button>
-      <div className="flex-1 flex items-center justify-center gap-1">
+      <div className="flex-1 flex items-center justify-center gap-1 min-w-0">
         <input
           ref={inputRef}
           type="number"
@@ -91,14 +87,14 @@ function StepperInput({
           placeholder={placeholder}
           step={step}
           min={min}
-          className="w-16 text-center text-sm text-gray-900 bg-transparent focus:outline-none py-3"
+          className="w-10 text-center text-sm text-gray-900 bg-transparent focus:outline-none py-3 min-w-0"
         />
-        <span className="text-xs text-gray-400">{unit}</span>
+        <span className="text-xs text-gray-400 flex-shrink-0">{unit}</span>
       </div>
       <button
         type="button"
         onClick={() => change(step)}
-        className="px-4 py-3 text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors select-none text-lg leading-none cursor-pointer"
+        className="px-3 py-3 text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors select-none text-lg leading-none cursor-pointer flex-shrink-0"
       >+</button>
     </div>
   );
@@ -111,14 +107,18 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
   const [wagaKg, setWagaKg] = useState("");
   const [dlugoscCm, setDlugoscCm] = useState("");
   const [zdjecia, setZdjecia] = useState<File[]>([]);
+  const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [blad, setBlad] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const dragCounter = useRef(0);
+  const { t } = useLanguage();
+  const fishDict = t.fish as Record<string, string>;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!auth.currentUser) {
-      setBlad("Musisz być zalogowany, aby dodać post.");
+      setBlad(t.post.errorNotLoggedIn);
       return;
     }
     setLoading(true);
@@ -129,7 +129,7 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
 
       const zdjeciaUrls: string[] = [];
       for (const plik of zdjecia) {
-        const url = await uploadToCloudinary(plik);
+        const url = await uploadToStorage(plik, uid);
         zdjeciaUrls.push(url);
       }
 
@@ -152,10 +152,38 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
       onClose();
     } catch (err) {
       console.error("Błąd zapisu posta:", err);
-      setBlad("Wystąpił błąd. Sprawdź konsolę lub spróbuj bez zdjęć.");
+      setBlad(t.post.errorGeneral);
     } finally {
       setLoading(false);
     }
+  }
+
+  function addFiles(files: File[]) {
+    const images = files.filter((f) => f.type.startsWith("image/"));
+    if (images.length > 0) setZdjecia((prev) => [...prev, ...images]);
+  }
+
+  function handleDragEnter(e: React.DragEvent) {
+    e.preventDefault();
+    dragCounter.current++;
+    setDragActive(true);
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    dragCounter.current--;
+    if (dragCounter.current === 0) setDragActive(false);
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    dragCounter.current = 0;
+    setDragActive(false);
+    addFiles(Array.from(e.dataTransfer.files));
   }
 
   return (
@@ -165,13 +193,13 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-gray-100">
           <div>
-            <h2 className="text-xl font-bold text-gray-900">Dodaj połów 🎣</h2>
+            <h2 className="text-xl font-bold text-gray-900">{t.post.addTitle}</h2>
             <p className="text-sm text-gray-400 mt-0.5">
               {lokalizacja
                 ? lokalizacja.numer
-                  ? `Stanowisko ${lokalizacja.numer} · ${lokalizacja.nazwa}`
+                  ? `${t.post.station} ${lokalizacja.numer} · ${lokalizacja.nazwa}`
                   : lokalizacja.nazwa
-                : "Podziel się swoim połowem"}
+                : t.post.shareDefault}
             </p>
           </div>
           <button
@@ -184,26 +212,30 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
 
           {/* Gatunek */}
           <div className="space-y-1.5">
-            <label className="text-sm font-semibold text-gray-700">Gatunek ryby <span className="text-blue-500">*</span></label>
+            <label className="text-sm font-semibold text-gray-700">{t.post.species} <span className="text-blue-500">*</span></label>
             <select
               value={typRyby}
               onChange={(e) => setTypRyby(e.target.value)}
               required
               className={INPUT}
             >
-              <option value="">Wybierz gatunek...</option>
-              {TYPY_RYB.map((t) => <option key={t} value={t}>{t}</option>)}
+              <option value="">{t.post.speciesPlaceholder}</option>
+              {TYPY_RYB.map((plKey) => (
+                <option key={plKey} value={plKey}>
+                  {fishDict[plKey] ?? plKey}
+                </option>
+              ))}
             </select>
           </div>
 
           {/* Nazwa */}
           <div className="space-y-1.5">
-            <label className="text-sm font-semibold text-gray-700">Nazwa ryby <span className="text-gray-400 font-normal">(opcjonalnie)</span></label>
+            <label className="text-sm font-semibold text-gray-700">{t.post.fishName} <span className="text-gray-400 font-normal">{t.post.optional}</span></label>
             <input
               type="text"
               value={nazwaRyby}
               onChange={(e) => setNazwaRyby(e.target.value)}
-              placeholder="np. Złoty Karp, Wielki Szczupak..."
+              placeholder={t.post.fishNamePlaceholder}
               className={INPUT}
             />
           </div>
@@ -211,49 +243,80 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
           {/* Waga + Długość */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="text-sm font-semibold text-gray-700">Waga</label>
+              <label className="text-sm font-semibold text-gray-700">{t.post.weight}</label>
               <StepperInput value={wagaKg} onChange={setWagaKg} step={0.1} min={0} placeholder="0.0" unit="kg" />
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-semibold text-gray-700">Długość</label>
+              <label className="text-sm font-semibold text-gray-700">{t.post.length}</label>
               <StepperInput value={dlugoscCm} onChange={setDlugoscCm} step={1} min={0} placeholder="0" unit="cm" />
             </div>
           </div>
 
           {/* Opis */}
           <div className="space-y-1.5">
-            <label className="text-sm font-semibold text-gray-700">Opis</label>
+            <label className="text-sm font-semibold text-gray-700">{t.post.description}</label>
             <textarea
               value={opis}
               onChange={(e) => setOpis(e.target.value)}
               rows={3}
-              placeholder="Opisz swój połów — miejsce, przynęta, warunki pogodowe..."
+              placeholder={t.post.descriptionPlaceholder}
               className={INPUT + " resize-none"}
             />
           </div>
 
-          {/* Zdjęcia */}
+          {/* Zdjęcia — drag & drop */}
           <div className="space-y-1.5">
-            <label className="text-sm font-semibold text-gray-700">Zdjęcia</label>
+            <label className="text-sm font-semibold text-gray-700">{t.post.photos}</label>
             <input
               ref={fileRef}
               type="file"
               accept="image/*"
               multiple
-              onChange={(e) => setZdjecia(Array.from(e.target.files ?? []))}
+              onChange={(e) => addFiles(Array.from(e.target.files ?? []))}
               className="hidden"
             />
-            <button
-              type="button"
+            <div
               onClick={() => fileRef.current?.click()}
-              className="w-full border-2 border-dashed border-gray-200 rounded-xl py-5 flex flex-col items-center gap-1 text-gray-400 hover:border-blue-400 hover:text-blue-500 hover:bg-blue-50 transition-all cursor-pointer"
+              onDragEnter={handleDragEnter}
+              onDragLeave={handleDragLeave}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              className={`w-full border-2 border-dashed rounded-xl py-6 flex flex-col items-center gap-1.5 cursor-pointer transition-all select-none ${
+                dragActive
+                  ? "border-blue-500 bg-blue-50 text-blue-600"
+                  : zdjecia.length > 0
+                  ? "border-green-400 bg-green-50 text-green-600"
+                  : "border-gray-200 text-gray-400 hover:border-blue-400 hover:text-blue-500 hover:bg-blue-50"
+              }`}
             >
-              <span className="text-2xl">{zdjecia.length > 0 ? "📷" : "📁"}</span>
-              <span className="text-sm font-medium">
-                {zdjecia.length > 0 ? `${zdjecia.length} zdjęcie(a) wybrane` : "Kliknij, aby dodać zdjęcia"}
+              <span className="text-2xl">
+                {dragActive ? "📂" : zdjecia.length > 0 ? "📷" : "📁"}
               </span>
-              {zdjecia.length === 0 && <span className="text-xs">JPG, PNG, HEIC</span>}
-            </button>
+              <span className="text-sm font-medium">
+                {zdjecia.length > 0 ? t.post.photosSelected(zdjecia.length) : t.post.photosClick}
+              </span>
+              {zdjecia.length === 0 && !dragActive && (
+                <span className="text-xs">{t.post.photosHint}</span>
+              )}
+            </div>
+            {zdjecia.length > 0 && (
+              <div className="flex gap-2 flex-wrap mt-1">
+                {zdjecia.map((f, i) => (
+                  <div key={i} className="relative group">
+                    <img
+                      src={URL.createObjectURL(f)}
+                      alt={f.name}
+                      className="w-16 h-16 object-cover rounded-lg border border-gray-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setZdjecia((prev) => prev.filter((_, j) => j !== i))}
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-xs leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                    >×</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Błąd */}
@@ -275,9 +338,9 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
                 </svg>
-                Zapisywanie...
+                {t.post.saving}
               </span>
-            ) : "Opublikuj połów"}
+            ) : t.post.publish}
           </button>
 
         </form>

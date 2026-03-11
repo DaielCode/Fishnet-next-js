@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import type { Stanowisko, Lowisko } from "@/types";
 
 const MapView = dynamic(() => import("@/components/map/MapView"), { ssr: false });
@@ -41,11 +41,13 @@ export default function MapaPage() {
   }
 
   return (
-    <div className="relative w-full" style={{ height: "calc(100vh - 57px)" }}>
+    <div className="relative w-full h-[calc(100vh-121px)] sm:h-[calc(100vh-57px)]">
+      <Suspense fallback={null}>
       <MapView
         onStanowiskoClick={handleStanowiskoClick}
         onLowiskoClick={handleLowiskoClick}
       />
+      </Suspense>
       {lokalizacja && (
         <DodajPostFeedModal
           lokalizacja={lokalizacja}

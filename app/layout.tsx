@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist } from "next/font/google";
 import "./globals.css";
 import Navbar from "@/components/ui/Navbar";
+import { LanguageProvider } from "@/context/LanguageContext";
 
 const geist = Geist({ subsets: ["latin"] });
 
@@ -18,8 +19,10 @@ export default function RootLayout({
   return (
     <html lang="pl">
       <body className={`${geist.className} bg-gray-50 min-h-screen`}>
-        <Navbar />
-        <main>{children}</main>
+        <LanguageProvider>
+          <Navbar />
+          <main className="sm:pb-0 pb-16">{children}</main>
+        </LanguageProvider>
       </body>
     </html>
   );
