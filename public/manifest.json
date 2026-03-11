@@ -1,0 +1,19 @@
+{
+  "name": "Fishnet — Mapa Łowisk",
+  "short_name": "Fishnet",
+  "description": "Społeczność wędkarzy. Mapa łowisk, stanowiska, połowy.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f9fafb",
+  "theme_color": "#2563eb",
+  "orientation": "portrait",
+  "lang": "pl",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
