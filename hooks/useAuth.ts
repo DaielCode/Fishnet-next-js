@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import {
   onAuthStateChanged,
-  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   signOut,
@@ -11,9 +10,6 @@ import {
 } from "firebase/auth";
 import { doc, setDoc, getDoc } from "firebase/firestore";
 import { auth, db, googleProvider } from "@/lib/firebase";
-
-const isMobile = () =>
-  typeof window !== "undefined" && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 
 async function saveUserIfNew(user: User) {
   const { uid, displayName, photoURL } = user;
@@ -35,10 +31,11 @@ export function useAuth() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Obsłuż wynik redirect po powrocie na stronę
-    getRedirectResult(auth).then((result) => {
-      if (result?.user) saveUserIfNew(result.user);
-    });
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) saveUserIfNew(result.user);
+      })
+      .catch((err) => console.error("getRedirectResult error:", err));
 
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
@@ -48,11 +45,10 @@ export function useAuth() {
   }, []);
 
   async function loginWithGoogle() {
-    if (isMobile()) {
+    try {
       await signInWithRedirect(auth, googleProvider);
-    } else {
-      const result = await signInWithPopup(auth, googleProvider);
-      await saveUserIfNew(result.user);
+    } catch (err) {
+      console.error("signInWithRedirect error:", err);
     }
   }
 
