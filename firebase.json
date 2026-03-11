@@ -7,6 +7,7 @@
     "rules": "storage.rules"
   },
   "hosting": {
+    "site": "fishnetpl",
     "public": "out",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "cleanUrls": true,
