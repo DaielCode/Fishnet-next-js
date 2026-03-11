@@ -3,8 +3,7 @@
 import { useState, useEffect } from "react";
 import {
   onAuthStateChanged,
-  signInWithRedirect,
-  getRedirectResult,
+  signInWithPopup,
   signOut,
   User,
 } from "firebase/auth";
@@ -31,12 +30,6 @@ export function useAuth() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getRedirectResult(auth)
-      .then((result) => {
-        if (result?.user) saveUserIfNew(result.user);
-      })
-      .catch((err) => console.error("getRedirectResult error:", err));
-
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       setLoading(false);
@@ -46,9 +39,12 @@ export function useAuth() {
 
   async function loginWithGoogle() {
     try {
-      await signInWithRedirect(auth, googleProvider);
-    } catch (err) {
-      console.error("signInWithRedirect error:", err);
+      const result = await signInWithPopup(auth, googleProvider);
+      await saveUserIfNew(result.user);
+    } catch (err: any) {
+      if (err?.code !== "auth/cancelled-popup-request" && err?.code !== "auth/popup-closed-by-user") {
+        console.error("loginWithGoogle error:", err);
+      }
     }
   }
 
