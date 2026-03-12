@@ -50,14 +50,11 @@ export default function PostCard({ post, authorNick, authorAvatar }: Props) {
     if (!window.confirm(t.post.confirmDelete)) return;
     setDeleted(true);
     try {
-      // Delete photos from Storage
       for (const url of post.zdjecia ?? []) {
         try {
           const storageRef = ref(storage, url);
           await deleteObject(storageRef);
-        } catch {
-          // ignore if already deleted or wrong ref
-        }
+        } catch { /* pomiń */ }
       }
       await deleteDoc(doc(db, "posty", post.id));
     } catch (err) {
@@ -74,11 +71,31 @@ export default function PostCard({ post, authorNick, authorAvatar }: Props) {
 
   return (
     <>
-      <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+      {/* ── Karta posta ── */}
+      <article
+        className="bg-white rounded-2xl overflow-hidden transition-shadow duration-200 hover:shadow-lg"
+        style={{ boxShadow: "0 2px 8px -2px rgb(0 0 0 / 0.10), 0 1px 3px -1px rgb(0 0 0 / 0.06)" }}
+      >
+
+        {/* ── Autor nad zdjęciem ── */}
+        <div className="px-4 pt-3 pb-2 flex items-center gap-2">
+          {authorAvatar ? (
+            <Image src={authorAvatar} alt={authorNick} width={36} height={36}
+              className="rounded-full ring-2 ring-white shadow-sm flex-shrink-0" />
+          ) : (
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-400 to-blue-700 flex items-center justify-center text-white text-sm font-bold ring-2 ring-white shadow-sm flex-shrink-0">
+              {authorNick[0]?.toUpperCase() ?? "?"}
+            </div>
+          )}
+          <p className="text-sm font-semibold text-gray-900 leading-tight truncate">{authorNick}</p>
+        </div>
 
         {/* Zdjęcie */}
         {post.zdjecia[0] && (
-          <div className="cursor-zoom-in" onClick={() => setLightbox(post.zdjecia[0])}>
+          <div
+            className="relative cursor-zoom-in bg-gray-100"
+            onClick={() => setLightbox(post.zdjecia[0])}
+          >
             <Image
               src={post.zdjecia[0]}
               alt={post.nazwa_ryby || post.typ_ryby}
@@ -86,107 +103,37 @@ export default function PostCard({ post, authorNick, authorAvatar }: Props) {
               height={0}
               sizes="(max-width: 768px) 100vw, 600px"
               loading="eager"
-              className="w-full h-auto"
+              style={{ width: "100%", height: "auto", display: "block" }}
+              className=""
             />
           </div>
         )}
 
-        <div className="p-4 space-y-3">
-
-          {/* Autor */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              {authorAvatar ? (
-                <Image
-                  src={authorAvatar}
-                  alt={authorNick}
-                  width={38}
-                  height={38}
-                  className="rounded-full ring-2 ring-gray-100"
-                />
-              ) : (
-                <div className="w-[38px] h-[38px] rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white text-sm font-bold ring-2 ring-gray-100">
-                  {authorNick[0]?.toUpperCase()}
-                </div>
-              )}
-              <div>
-                <p className="text-sm font-semibold text-gray-900">{authorNick}</p>
-                <p className="text-xs text-gray-400">{date}</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {/* Badge gatunek */}
-              <span className="bg-blue-50 text-blue-600 text-xs font-semibold px-3 py-1 rounded-full border border-blue-100">
-                {fishLabel}
-              </span>
-              {/* Usuń post */}
-              {isOwner && (
-                <button
-                  onClick={handleDelete}
-                  title={t.post.deletePost}
-                  className="w-7 h-7 flex items-center justify-center rounded-full text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors cursor-pointer"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Nazwa ryby */}
-          {post.nazwa_ryby && (
-            <p className="font-bold text-gray-900 text-base">{post.nazwa_ryby}</p>
-          )}
-
-          {/* Statystyki waga/długość */}
-          {(post.waga_kg || post.dlugosc_cm) && (
-            <div className="flex gap-3">
-              {post.waga_kg && (
-                <div className="flex items-center gap-1.5 bg-gray-50 rounded-lg px-3 py-1.5">
-                  <span className="text-base">⚖️</span>
-                  <span className="text-sm font-semibold text-gray-800">{post.waga_kg} kg</span>
-                </div>
-              )}
-              {post.dlugosc_cm && (
-                <div className="flex items-center gap-1.5 bg-gray-50 rounded-lg px-3 py-1.5">
-                  <span className="text-base">📏</span>
-                  <span className="text-sm font-semibold text-gray-800">{post.dlugosc_cm} cm</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Opis */}
-          {post.opis && (
-            <p className="text-sm text-gray-600 leading-relaxed">{post.opis}</p>
-          )}
-
-          {/* Lajk + Zobacz na mapie */}
-          <div className="pt-1 border-t border-gray-50 flex items-center justify-between">
-            <button
-              onClick={handleLike}
-              className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                liked
-                  ? "text-red-500 bg-red-50"
-                  : "text-gray-500 hover:text-red-400 hover:bg-red-50"
-              }`}
+        {/* ── Akcje pod zdjęciem ── */}
+        <div className="px-4 pt-3 flex items-center justify-between border-b border-gray-100 pb-3">
+          <button
+            onClick={handleLike}
+            className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-all cursor-pointer select-none ${
+              liked
+                ? "text-red-500 bg-red-50"
+                : "text-gray-500 hover:text-red-400 hover:bg-red-50"
+            }`}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              className="w-5 h-5 transition-transform duration-150 hover:scale-110"
+              fill={liked ? "currentColor" : "none"}
+              stroke="currentColor"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                className="w-5 h-5 transition-all"
-                fill={liked ? "currentColor" : "none"}
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-              </svg>
-              {likes}
-            </button>
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+            </svg>
+            <span className="text-gray-700">{likes}</span>
+          </button>
+
           {post.lat != null && post.lng != null && (
             <Link
               href={`/mapa?lat=${post.lat}&lng=${post.lng}`}
@@ -195,15 +142,62 @@ export default function PostCard({ post, authorNick, authorAvatar }: Props) {
               <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
               </svg>
-              {t.feed.seeOnMap}
+              <span className="text-gray-600">{t.feed.seeOnMap}</span>
             </Link>
           )}
+        </div>
+
+        <div className="p-4 space-y-3">
+
+          {/* ── Nagłówek: data + badge + usuń ── */}
+          <div className="flex items-center gap-2">
+            <p className="text-xs text-gray-500 leading-tight flex-1">{date}</p>
+            <span className="bg-blue-50 text-blue-700 text-xs font-semibold px-2 py-1 rounded-full border border-blue-100 flex-shrink-0 max-w-[120px] truncate">
+              {fishLabel}
+            </span>
+            {isOwner && (
+              <button onClick={handleDelete} title={t.post.deletePost}
+                className="w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors cursor-pointer"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            )}
           </div>
 
-        </div>
-      </div>
+          {/* ── Nazwa ryby ── */}
+          {post.nazwa_ryby && (
+            <p className="font-bold text-gray-900 text-base leading-snug">{post.nazwa_ryby}</p>
+          )}
 
-      {/* Lightbox */}
+          {/* ── Waga / Długość ── */}
+          {(post.waga_kg || post.dlugosc_cm) && (
+            <div className="flex flex-wrap gap-2">
+              {post.waga_kg && (
+                <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-100 rounded-lg px-3 py-1.5">
+                  <span className="text-sm">⚖️</span>
+                  <span className="text-sm font-semibold text-slate-700">{post.waga_kg} kg</span>
+                </div>
+              )}
+              {post.dlugosc_cm && (
+                <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-100 rounded-lg px-3 py-1.5">
+                  <span className="text-sm">📏</span>
+                  <span className="text-sm font-semibold text-slate-700">{post.dlugosc_cm} cm</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Opis ── */}
+          {post.opis && (
+            <p className="text-sm text-gray-700 leading-relaxed">{post.opis}</p>
+          )}
+
+        </div>
+      </article>
+
+      {/* ── Lightbox ── */}
       {lightbox && (
         <div
           className="fixed inset-0 bg-black/90 z-[2000] flex items-center justify-center p-4 cursor-zoom-out"
@@ -215,7 +209,7 @@ export default function PostCard({ post, authorNick, authorAvatar }: Props) {
             width={0}
             height={0}
             sizes="100vw"
-            className="max-w-full max-h-[90vh] w-auto h-auto rounded-xl"
+            className="max-w-full max-h-[90vh] w-auto h-auto rounded-xl shadow-2xl"
           />
         </div>
       )}

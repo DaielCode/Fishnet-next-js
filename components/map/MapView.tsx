@@ -41,11 +41,6 @@ const WARSTWY = [
   { id: "zbiorniki_ligota",    plik: "/geojson/zbiorniki_ligota.geojson",    kolor: "#0369a1" },
 ];
 
-// Piksele odpowiadające 200m przy danym zoomie (szerokość geogr. ~50°)
-function pixele200m(zoom: number): number {
-  const metersPerPixel = (2 * Math.PI * 6378137 * Math.cos(50 * Math.PI / 180)) / (256 * Math.pow(2, zoom));
-  return Math.round(200 / metersPerPixel);
-}
 
 interface WarstwaGeo {
   id: string;
@@ -60,7 +55,41 @@ interface LowiskoKlik {
   lng: number;
 }
 
-function MapController({ clusterRef }: { clusterRef: React.MutableRefObject<any> }) {
+// ─── Centrowanie na lokalizacji użytkownika przy starcie ─────────────────────
+
+function GeolocateOnMount() {
+  const map = useMap();
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        // Ignoruj wynik jeśli dokładność gorsza niż 5km (IP-based, np. Starlink)
+        if (pos.coords.accuracy > 5000) return;
+        map.setView([pos.coords.latitude, pos.coords.longitude], 13);
+      },
+      () => {},
+      { timeout: 15000, enableHighAccuracy: true, maximumAge: 0 }
+    );
+  }, [map]);
+  return null;
+}
+
+// ─── Kontroler wyszukiwania lokalizacji ──────────────────────────────────────
+
+function SearchFlyTo({ target }: { target: [number, number] | null }) {
+  const map = useMap();
+  const prev = useRef<string>("");
+  useEffect(() => {
+    if (!target) return;
+    const key = `${target[0]},${target[1]}`;
+    if (prev.current === key) return;
+    prev.current = key;
+    map.flyTo(target, 13, { duration: 1.2 });
+  }, [target, map]);
+  return null;
+}
+
+function MapController() {
   const map = useMap();
   const params = useSearchParams();
   const lat = parseFloat(params.get("lat") ?? "");
@@ -68,28 +97,7 @@ function MapController({ clusterRef }: { clusterRef: React.MutableRefObject<any>
 
   useEffect(() => {
     if (isNaN(lat) || isNaN(lng)) return;
-
     map.flyTo([lat, lng], 17, { duration: 1.2 });
-
-    const onMoveEnd = () => {
-      const cluster = clusterRef.current;
-      if (!cluster) return;
-
-      const layers = (cluster.getLayers?.() ?? []) as L.Marker[];
-      const target = layers.find((m: L.Marker) => {
-        const pos = m.getLatLng();
-        return Math.abs(pos.lat - lat) < 0.00001 && Math.abs(pos.lng - lng) < 0.00001;
-      });
-
-      if (!target) return;
-
-      cluster.zoomToShowLayer(target, () => {
-        setTimeout(() => target.openTooltip(), 100);
-      });
-    };
-
-    map.once("moveend", onMoveEnd);
-    return () => { map.off("moveend", onMoveEnd); };
   }, [lat, lng, map]);
 
   return null;
@@ -106,38 +114,84 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
   const [warstwy, setWarstwy] = useState<WarstwaGeo[]>([]);
   const [postyZPinami, setPostyZPinami] = useState<Post[]>([]);
   const [lightbox, setLightbox] = useState<string | null>(null);
-  const clusterRef = useRef<any>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchTarget, setSearchTarget] = useState<[number, number] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchNotFound, setSearchNotFound] = useState(false);
   const { t } = useLanguage();
 
+  async function handleMapSearch() {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return;
+    setSearching(true);
+    setSearchNotFound(false);
+    try {
+      // Najpierw szukaj po nazwie łowiska
+      const trafione = lowiska.find((l) => l.nazwa.toLowerCase().includes(q));
+      if (trafione?.lokalizacja) {
+        setSearchTarget([trafione.lokalizacja.latitude, trafione.lokalizacja.longitude]);
+        return;
+      }
+      // Fallback: Nominatim (tylko miejscowości w Polsce)
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=5&countrycodes=pl,ua,cz,hu,at,be,bg,cy,de,dk,ee,es,fi,fr,gr,hr,ie,it,lt,lu,lv,mt,nl,pt,ro,se,si,sk`,
+        { headers: { "Accept-Language": "pl" } }
+      );
+      const data = await res.json();
+      const miejscowosc = data.find((r: { class: string }) => r.class === "place");
+      if (miejscowosc) {
+        setSearchTarget([parseFloat(miejscowosc.lat), parseFloat(miejscowosc.lon)]);
+      } else {
+        setSearchNotFound(true);
+      }
+    } catch { /* cicho pomiń */ }
+    finally { setSearching(false); }
+  }
+
   useEffect(() => {
-    // Stanowiska z Firestore
-    async function fetchStanowiska() {
+    async function fetchAll() {
+      // GeoJSON warstwy statyczne z /public/
+      const staticWarstwy = await Promise.all(
+        WARSTWY.map(async ({ id, plik, kolor }) => {
+          try {
+            const res = await fetch(plik);
+            if (!res.ok) return null;
+            return { id, kolor, data: await res.json() } as WarstwaGeo;
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      // Lowiska + stanowiska z Firestore
       const snap = await getDocs(collection(db, "lowiska"));
       const lowiskaData = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Lowisko));
       setLowiska(lowiskaData);
+
       const all: Stanowisko[] = [];
       for (const l of lowiskaData) {
         const s = await getDocs(collection(db, "lowiska", l.id, "stanowiska"));
         s.docs.forEach((d) => all.push({ id: d.id, lowisko_id: l.id, ...d.data() } as Stanowisko));
       }
       setStanowiska(all);
-    }
 
-    // GeoJSON warstwy statyczne
-    async function fetchWarstwy() {
-      const loaded = await Promise.all(
-        WARSTWY.map(async ({ id, plik, kolor }) => {
+      // GeoJSON z Firestore (łowiska dodane przez admina) — przechowywane jako JSON string
+      const firestoreWarstwy = lowiskaData
+        .filter((l) => l.geojson_data)
+        .map((l) => {
+          let data: GeoJSON.FeatureCollection;
           try {
-            const res = await fetch(plik);
-            if (!res.ok) return null;
-            const data = await res.json();
-            return { id, kolor, data } as WarstwaGeo;
+            data = typeof l.geojson_data === "string"
+              ? JSON.parse(l.geojson_data)
+              : (l.geojson_data as unknown as GeoJSON.FeatureCollection);
           } catch {
             return null;
           }
+          return { id: `fs_${l.id}`, kolor: l.kolor ?? "#1d4ed8", data };
         })
-      );
-      setWarstwy(loaded.filter(Boolean) as WarstwaGeo[]);
+        .filter(Boolean) as WarstwaGeo[];
+
+      setWarstwy([...(staticWarstwy.filter(Boolean) as WarstwaGeo[]), ...firestoreWarstwy]);
     }
 
     // Posty z pinami (mają lat/lng)
@@ -149,24 +203,55 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
       setPostyZPinami(posty);
     });
 
-    fetchStanowiska();
-    fetchWarstwy();
+    fetchAll();
     return unsub;
   }, []);
 
   return (
     <>
+    <div className="relative w-full h-full" style={{ minHeight: 0 }}>
+
+      {/* ── Wyszukiwarka lokalizacji (overlay) ── */}
+      <div
+        style={{ position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", zIndex: 1000, width: "min(340px, calc(100% - 24px))" }}
+      >
+        <div className="flex gap-1.5 bg-white rounded-2xl shadow-lg border border-gray-200 p-1.5">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => { setSearchQuery(e.target.value); setSearchNotFound(false); }}
+            onKeyDown={(e) => e.key === "Enter" && handleMapSearch()}
+            placeholder="Szukaj łowiska lub miejscowości..."
+            className="flex-1 px-3 py-1.5 text-sm text-gray-900 bg-transparent placeholder:text-gray-400 outline-none"
+          />
+          <button
+            onClick={handleMapSearch}
+            disabled={searching}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-3 py-1.5 rounded-xl transition-colors disabled:opacity-50 cursor-pointer whitespace-nowrap"
+          >
+            {searching ? "..." : "Szukaj"}
+          </button>
+        </div>
+        {searchNotFound && (
+          <p className="text-xs text-red-500 bg-white rounded-xl px-3 py-1.5 mt-1 shadow text-center">
+            Nie znaleziono łowiska ani miejscowości
+          </p>
+        )}
+      </div>
+
     <MapContainer
       center={[49.8877, 18.9510]}
       zoom={15}
       className="w-full h-full"
-      style={{ minHeight: "500px" }}
+      style={{ minHeight: 0 }}
     >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      <MapController clusterRef={clusterRef} />
+      <GeolocateOnMount />
+      <MapController />
+      <SearchFlyTo target={searchTarget} />
 
       {/* Wszystkie warstwy GeoJSON */}
       {warstwy.map((w) => (
@@ -180,7 +265,10 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
             fillOpacity: 0.2,
           }}
           onEachFeature={(feature, layer) => {
-            const nazwa = feature.properties?.name ?? t.map.fishingSpot;
+            const firestoreNazwa = w.id.startsWith("fs_")
+              ? lowiska.find((l) => l.id === w.id.slice(3))?.nazwa
+              : undefined;
+            const nazwa = firestoreNazwa ?? feature.properties?.name ?? t.map.fishingSpot;
             layer.on({
               click: (e) => {
                 onLowiskoClick?.({
@@ -205,43 +293,43 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
       ))}
 
       {/* Markery stanowisk */}
-      {stanowiska.map((s) => {
-        const lowisko = lowiska.find((l) => l.id === s.lowisko_id);
-        return (
-          <Marker key={s.id} position={[s.wspolrzedne.latitude, s.wspolrzedne.longitude]}>
-            <Popup>
-              <div className="text-sm">
-                <p className="font-bold">{t.map.station} {s.numer}</p>
-                <p className="text-gray-600">{lowisko?.nazwa}</p>
-                {s.opis && <p className="mt-1">{s.opis}</p>}
-                {onStanowiskoClick && lowisko && (
-                  <button
-                    onClick={() => onStanowiskoClick(s, lowisko)}
-                    className="mt-2 w-full bg-blue-600 text-white text-xs py-1 px-2 rounded hover:bg-blue-700"
-                  >
-                    {t.map.addCatch}
-                  </button>
-                )}
-              </div>
-            </Popup>
-          </Marker>
-        );
-      })}
+      <MarkerClusterGroup chunkedLoading showCoverageOnHover={false}>
+        {stanowiska.map((s) => {
+          const lowisko = lowiska.find((l) => l.id === s.lowisko_id);
+          return (
+            <Marker key={s.id} position={[s.wspolrzedne.latitude, s.wspolrzedne.longitude]}>
+              <Popup>
+                <div className="text-sm">
+                  <p className="font-bold">{t.map.station} {s.numer}</p>
+                  <p className="text-gray-600">{lowisko?.nazwa}</p>
+                  {s.opis && <p className="mt-1">{s.opis}</p>}
+                  {onStanowiskoClick && lowisko && (
+                    <button
+                      onClick={() => onStanowiskoClick(s, lowisko)}
+                      className="mt-2 w-full bg-blue-600 text-white text-xs py-1 px-2 rounded hover:bg-blue-700"
+                    >
+                      {t.map.addCatch}
+                    </button>
+                  )}
+                </div>
+              </Popup>
+            </Marker>
+          );
+        })}
+      </MarkerClusterGroup>
 
-      {/* Piny postów z grupowaniem */}
+      {/* Piny postów */}
       <MarkerClusterGroup
-        ref={clusterRef}
         chunkedLoading
+        showCoverageOnHover={false}
         iconCreateFunction={(cluster: { getChildCount: () => number }) => L.divIcon({
           html: `<div style="background:#2563eb;color:white;border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.35);">${cluster.getChildCount()}</div>`,
           className: "",
           iconSize: [36, 36],
           iconAnchor: [18, 18],
         })}
-        maxClusterRadius={(zoom: number) => pixele200m(zoom)}
-        showCoverageOnHover={false}
       >
-        {postyZPinami.map((post) => (
+      {postyZPinami.map((post) => (
           <Marker key={post.id} position={[post.lat!, post.lng!]} icon={ikonaPosta}>
             <Tooltip direction="top" offset={[0, -20]} opacity={1} interactive>
               <div style={{ fontSize: 13, minWidth: 180 }}>
@@ -308,9 +396,10 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
               </div>
             </Popup>
           </Marker>
-        ))}
+      ))}
       </MarkerClusterGroup>
     </MapContainer>
+    </div>
 
       {lightbox && (
         <div

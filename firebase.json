@@ -10,7 +10,6 @@
     "site": "fishnetpl",
     "public": "out",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-    "trailingSlash": true,
     "headers": [
       {
         "source": "**",
@@ -18,6 +17,12 @@
           { "key": "Cross-Origin-Opener-Policy", "value": "unsafe-none" }
         ]
       }
+    ],
+    "rewrites": [
+      { "source": "/feed/__next.feed.__PAGE__.txt", "destination": "/feed/__next.feed.txt" },
+      { "source": "/mapa/__next.mapa.__PAGE__.txt", "destination": "/mapa/__next.mapa.txt" },
+      { "source": "/profil/__next.profil.__PAGE__.txt", "destination": "/profil/__next.profil.txt" },
+      { "source": "/admin/__next.admin.__PAGE__.txt", "destination": "/admin/__next.admin.txt" }
     ]
   }
 }

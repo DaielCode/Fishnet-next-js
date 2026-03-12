@@ -20,7 +20,7 @@ const LANGS: { lang: Lang; code: string; label: string; colors: string }[] = [
 interface DropdownPos { top: number; right: number }
 
 export default function Navbar() {
-  const { user, loading, loginWithGoogle, logout } = useAuth();
+  const { user, loading, loginWithGoogle, logout, isAdmin } = useAuth();
   const { t, lang, setLang } = useLanguage();
   const pathname = usePathname();
   const [modalOpen, setModalOpen] = useState(false);
@@ -52,6 +52,11 @@ export default function Navbar() {
           <Link href="/feed" className={`hidden sm:block text-sm px-3 py-1.5 rounded-lg transition-colors ${pathname === "/feed" ? "text-blue-600 bg-blue-50 font-medium" : "text-gray-600 hover:text-blue-600 hover:bg-gray-50"}`}>
             {t.nav.feed}
           </Link>
+          {isAdmin && (
+            <Link href="/admin" className={`hidden sm:block text-sm px-3 py-1.5 rounded-lg transition-colors ${pathname === "/admin" ? "text-purple-600 bg-purple-50 font-medium" : "text-gray-600 hover:text-purple-600 hover:bg-purple-50"}`}>
+              {t.nav.admin}
+            </Link>
+          )}
 
           {/* + Dodaj post */}
           {user && (
@@ -132,7 +137,10 @@ export default function Navbar() {
       {modalOpen && <DodajPostFeedModal onClose={() => setModalOpen(false)} />}
 
       {/* Bottom navigation — tylko mobile */}
-      <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 flex">
+      <nav
+        className="sm:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-[500] flex"
+        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+      >
         <Link
           href="/mapa"
           className={`flex-1 flex flex-col items-center justify-center py-3 gap-0.5 text-xs font-medium transition-colors ${

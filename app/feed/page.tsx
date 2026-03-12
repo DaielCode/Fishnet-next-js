@@ -14,6 +14,7 @@ function FeedContent() {
   const [posty, setPosty] = useState<Post[]>([]);
   const [autorzy, setAutorzy] = useState<Record<string, User>>({});
   const [modalOpen, setModalOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
   const { user } = useAuth();
   const { t } = useLanguage();
   const params = useSearchParams();
@@ -26,6 +27,7 @@ function FeedContent() {
     const unsub = onSnapshot(q, async (snap) => {
       const data = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Post));
       setPosty(data);
+      setLoading(false);
 
       const noweUid = [...new Set(data.map((p) => p.user_id))].filter(
         (uid) => !autorzy[uid]
@@ -65,9 +67,28 @@ function FeedContent() {
         )}
       </div>
       {modalOpen && <DodajPostFeedModal onClose={() => setModalOpen(false)} />}
-      {posty.length === 0 && (
+      {loading ? (
+        <div className="space-y-4">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 animate-pulse">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-full bg-gray-200" />
+                <div className="space-y-1.5">
+                  <div className="h-3 w-24 bg-gray-200 rounded" />
+                  <div className="h-2.5 w-16 bg-gray-100 rounded" />
+                </div>
+              </div>
+              <div className="h-44 bg-gray-100 rounded-xl mb-3" />
+              <div className="space-y-2">
+                <div className="h-3 w-3/4 bg-gray-200 rounded" />
+                <div className="h-3 w-1/2 bg-gray-100 rounded" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : posty.length === 0 ? (
         <p className="text-center text-gray-400 py-16">{t.feed.empty}</p>
-      )}
+      ) : null}
       <div className="space-y-4">
         {posty.map((post) => {
           const autor = autorzy[post.user_id];

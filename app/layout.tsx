@@ -1,11 +1,8 @@
 import type { Metadata } from "next";
-import { Geist } from "next/font/google";
 import "./globals.css";
 import Navbar from "@/components/ui/Navbar";
 import { LanguageProvider } from "@/context/LanguageContext";
 import PWARegister from "@/components/ui/PWARegister";
-
-const geist = Geist({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Fishnet — Mapa Łowisk",
@@ -29,7 +26,7 @@ export default function RootLayout({
         <meta name="theme-color" content="#2563eb" />
         <link rel="apple-touch-icon" href="/icons/icon.svg" />
       </head>
-      <body className={`${geist.className} bg-gray-50 min-h-screen`}>
+      <body className="bg-gray-50 min-h-screen" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" }}>
         <LanguageProvider>
           <Navbar />
           <main className="sm:pb-0 pb-16">{children}</main>

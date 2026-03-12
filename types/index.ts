@@ -7,6 +7,7 @@ export interface User {
   bio: string;
   followers_count: number;
   following_count: number;
+  isAdmin?: boolean;
 }
 
 export interface Lowisko {
@@ -14,7 +15,9 @@ export interface Lowisko {
   nazwa: string;
   lokalizacja: GeoPoint;
   opis: string;
-  geojson_url?: string; // ścieżka do pliku w /public/geojson/ np. "/geojson/uroczysko.geojson"
+  geojson_url?: string;
+  geojson_data?: string; // JSON.stringify(GeoJSON.FeatureCollection) — Firestore nie obsługuje zagnieżdżonych tablic
+  kolor?: string;
 }
 
 export interface Stanowisko {
@@ -23,6 +26,18 @@ export interface Stanowisko {
   numer: number;
   wspolrzedne: GeoPoint;
   opis: string;
+}
+
+export interface LowiskoPropozycja {
+  id: string;
+  user_id: string;
+  nazwa: string;
+  opis: string;
+  lokalizacja: GeoPoint;
+  kolor: string;
+  geojson_data?: string;
+  status: "oczekuje" | "zaakceptowane" | "odrzucone";
+  timestamp: Timestamp;
 }
 
 export interface Post {
