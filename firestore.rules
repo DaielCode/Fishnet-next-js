@@ -22,7 +22,10 @@ service cloud.firestore {
     match /posty/{postId} {
       allow read: if true;
       allow create: if request.auth != null;
-      allow update: if request.auth != null && request.auth.uid == resource.data.user_id;
+      allow update: if request.auth != null && (
+        request.auth.uid == resource.data.user_id ||
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'likedBy'])
+      );
       allow delete: if request.auth != null &&
                        (request.auth.uid == resource.data.user_id || isAdmin());
     }

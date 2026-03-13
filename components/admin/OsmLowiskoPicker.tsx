@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { POLSKIE_MIASTA } from "@/lib/miejscowosci";
 import { MapContainer, TileLayer, GeoJSON as GeoJSONLayer, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -260,6 +261,9 @@ function MapContent({
 export default function OsmLowiskoPicker({ onConfirm, onCancel }: Props) {
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [suggestions, setSuggestions] = useState<{ label: string; sublabel?: string; lat: number; lng: number }[]>([]);
+  const suggestAbortRef = useRef<AbortController | null>(null);
   const [panTarget, setPanTarget] = useState<[number, number] | null>(null);
   const [zbiorniki, setZbiorniki] = useState<OsmZbiornik[]>([]);
   const [loadingZbiorniki, setLoadingZbiorniki] = useState(false);
@@ -327,6 +331,75 @@ export default function OsmLowiskoPicker({ onConfirm, onCancel }: Props) {
     });
   }
 
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) { setSuggestions([]); return; }
+
+    const ql = q.toLowerCase();
+
+    // Natychmiastowe: duże miasta
+    const miastaMatches = POLSKIE_MIASTA
+      .filter((m) => m.n.toLowerCase().includes(ql))
+      .sort((a, b) => {
+        const aPrefix = a.n.toLowerCase().startsWith(ql) ? 1 : 0;
+        const bPrefix = b.n.toLowerCase().startsWith(ql) ? 1 : 0;
+        if (aPrefix !== bPrefix) return bPrefix - aPrefix;
+        return b.p - a.p;
+      })
+      .slice(0, 4)
+      .map((m) => ({ label: m.n, sublabel: undefined as string | undefined, lat: m.lat, lng: m.lng }));
+    setSuggestions(miastaMatches);
+
+    suggestAbortRef.current?.abort();
+    const controller = new AbortController();
+    suggestAbortRef.current = controller;
+
+    const timer = setTimeout(async () => {
+      try {
+        type PhotonFeature = {
+          geometry: { coordinates: [number, number] };
+          properties: { name?: string; state?: string; county?: string; country?: string; type?: string; osm_id?: number };
+        };
+        const res = await fetch(
+          `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=7&lat=50.5&lon=19.0`,
+          { signal: controller.signal }
+        );
+        const data = await res.json();
+        const ALLOWED_TYPES = ["city", "town", "village", "hamlet", "locality", "municipality", "county", "state"];
+        const existingLabels = new Set(miastaMatches.map((m) => m.label.toLowerCase()));
+        const seen = new Set<number>();
+        const photonResults = (data.features as PhotonFeature[])
+          .filter((f) => {
+            const type = (f.properties.type ?? "").toLowerCase();
+            const id = f.properties.osm_id ?? 0;
+            const name = (f.properties.name ?? "").toLowerCase();
+            return ALLOWED_TYPES.includes(type) && !existingLabels.has(name) && !seen.has(id) && seen.add(id);
+          })
+          .slice(0, 3)
+          .map((f) => ({
+            label: f.properties.name ?? "",
+            sublabel: f.properties.state ?? f.properties.county ?? undefined,
+            lat: f.geometry.coordinates[1],
+            lng: f.geometry.coordinates[0],
+          }))
+          .filter((r) => r.label);
+        setSuggestions([...miastaMatches, ...photonResults].slice(0, 5));
+      } catch { /* abort lub błąd sieciowy */ }
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  function pickSuggestion(item: { label: string; lat: number; lng: number }) {
+    setSearchQuery(item.label);
+    setPanTarget([item.lat, item.lng]);
+    setSuggestions([]);
+    setSearchFocused(false);
+    setZbiorniki([]);
+    setSelectedIds(new Set());
+    const shortName = item.label;
+    setMessage({ type: "info", text: `Przechodzę do: ${shortName}` });
+  }
+
   async function handleSearch() {
     const q = searchQuery.trim();
     if (!q) return;
@@ -375,22 +448,61 @@ export default function OsmLowiskoPicker({ onConfirm, onCancel }: Props) {
     <div className="space-y-3">
 
       {/* ── Wyszukiwarka miejscowości ── */}
-      <div className="flex gap-2">
-        <input
-          type="text"
-          placeholder="Wpisz nazwę wsi, gminy lub miasta..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-          className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 bg-white placeholder:text-gray-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
-        />
-        <button
-          onClick={handleSearch}
-          disabled={searching}
-          className="bg-blue-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-blue-700 disabled:opacity-50 cursor-pointer font-medium transition-colors whitespace-nowrap"
-        >
-          {searching ? "..." : "Szukaj"}
-        </button>
+      <div className="relative">
+        <div className="flex gap-2">
+          <div className="flex-1 flex items-center border border-gray-200 rounded-xl bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 transition-all">
+            <input
+              type="text"
+              placeholder="Wpisz nazwę wsi, gminy lub miasta..."
+              value={searchQuery}
+              onChange={(e) => { setSearchQuery(e.target.value); setMessage(null); }}
+              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setTimeout(() => setSearchFocused(false), 300)}
+              className="flex-1 px-3 py-2.5 text-sm text-gray-900 bg-transparent placeholder:text-gray-400 outline-none"
+            />
+            {searchQuery && (
+              <button
+                onMouseDown={(e) => { e.preventDefault(); setSearchQuery(""); setSuggestions([]); }}
+                className="p-1.5 text-gray-400 hover:text-gray-600 cursor-pointer flex-shrink-0"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+          <button
+            onClick={handleSearch}
+            disabled={searching}
+            className="bg-blue-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-blue-700 disabled:opacity-50 cursor-pointer font-medium transition-colors whitespace-nowrap"
+          >
+            {searching ? "..." : "Szukaj"}
+          </button>
+        </div>
+
+        {/* Podpowiedzi */}
+        {searchFocused && suggestions.length > 0 && (
+          <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden z-[9999]">
+            {suggestions.map((item, i) => (
+              <button
+                key={i}
+                onMouseDown={(e) => { e.preventDefault(); pickSuggestion(item); }}
+                onTouchEnd={(e) => { e.preventDefault(); pickSuggestion(item); }}
+                className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-gray-50 active:bg-gray-100 transition-colors cursor-pointer text-left"
+              >
+                <svg className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <div className="min-w-0">
+                  <p className="text-sm text-gray-800 truncate">{item.label}</p>
+                  {item.sublabel && <p className="text-xs text-gray-400 truncate">{item.sublabel}</p>}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── Komunikat ── */}

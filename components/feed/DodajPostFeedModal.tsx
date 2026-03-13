@@ -6,6 +6,7 @@ import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, auth, storage } from "@/lib/firebase";
 import { useLanguage } from "@/context/LanguageContext";
+import { useAuth } from "@/hooks/useAuth";
 
 const LocationPreview = dynamic(() => import("./LocationPreview"), { ssr: false, loading: () => (
   <div className="w-full rounded-xl bg-gray-100 animate-pulse" style={{ height: 140 }} />
@@ -106,6 +107,7 @@ function StepperInput({
 }
 
 export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
+  const { user, loginWithGoogle } = useAuth();
   const [typRyby, setTypRyby] = useState("");
   const [nazwaRyby, setNazwaRyby] = useState("");
   const [opis, setOpis] = useState("");
@@ -115,9 +117,46 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
   const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [blad, setBlad] = useState<string | null>(null);
+  const [dragY, setDragY] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
+  const swipeHandleRef = useRef<HTMLDivElement>(null);
+  const swipeStartY = useRef<number | null>(null);
+  const dragYRef = useRef(0);
   const { t } = useLanguage();
+
+  useEffect(() => {
+    const el = swipeHandleRef.current;
+    if (!el) return;
+
+    function onTouchStart(e: TouchEvent) {
+      swipeStartY.current = e.touches[0].clientY;
+    }
+    function onTouchMove(e: TouchEvent) {
+      if (swipeStartY.current === null) return;
+      const delta = e.touches[0].clientY - swipeStartY.current;
+      if (delta > 0) {
+        e.preventDefault();
+        dragYRef.current = delta;
+        setDragY(delta);
+      }
+    }
+    function onTouchEnd() {
+      if (dragYRef.current > 80) { onClose(); }
+      dragYRef.current = 0;
+      setDragY(0);
+      swipeStartY.current = null;
+    }
+
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [onClose]);
   const fishDict = t.fish as Record<string, string>;
 
   async function handleSubmit(e: React.FormEvent) {
@@ -163,20 +202,23 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
   return (
     /* Mobile: bottom sheet od dołu. Desktop: wyśrodkowany modal */
     <div
-      className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-[1000] sm:p-4"
+      className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-[1002] sm:p-4"
+      style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md max-h-[93vh] flex flex-col shadow-2xl"
+        className="bg-white rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md max-h-[93dvh] flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
+        style={{ transform: `translateY(${dragY}px)`, transition: dragY === 0 ? "transform 0.3s ease" : "none" }}
       >
-        {/* Uchwyt — tylko mobile */}
-        <div className="sm:hidden flex justify-center pt-3 pb-1 flex-shrink-0">
-          <div className="w-10 h-1 rounded-full bg-gray-300" />
-        </div>
+        {/* Uchwyt + Header — obszar przeciągania (tylko mobile) */}
+        <div ref={swipeHandleRef} className="sm:cursor-default cursor-grab active:cursor-grabbing flex-shrink-0">
+          <div className="sm:hidden flex justify-center pt-3 pb-1">
+            <div className="w-10 h-1 rounded-full bg-gray-300" />
+          </div>
 
         {/* Header — sticky, zawsze widoczny */}
-        <div className="flex items-center justify-between px-5 pt-3 sm:pt-5 pb-4 border-b border-gray-100 flex-shrink-0">
+        <div className="flex items-center justify-between px-5 pt-3 sm:pt-5 pb-4 border-b border-gray-100">
           <div className="min-w-0 pr-3">
             <h2 className="text-xl font-bold text-gray-900">{t.post.addTitle}</h2>
             <p className="text-sm text-gray-400 mt-0.5 truncate">
@@ -192,16 +234,32 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
             className="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 transition-colors text-xl cursor-pointer"
           >×</button>
         </div>
+        </div>{/* koniec swipeHandleRef */}
 
         {/* Scrollowalna zawartość */}
         <div className="overflow-y-auto flex-1">
 
+        {/* Niezalogowany */}
+        {!user && (
+          <div className="flex flex-col items-center justify-center py-16 px-6 text-center gap-4">
+            <div className="text-5xl">🔒</div>
+            <p className="font-semibold text-gray-900">Musisz być zalogowany</p>
+            <p className="text-sm text-gray-400">Zaloguj się, aby dodać swój połów.</p>
+            <button
+              onClick={loginWithGoogle}
+              className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors cursor-pointer"
+            >
+              Zaloguj się przez Google
+            </button>
+          </div>
+        )}
+
         {/* Podgląd pinu na mapie */}
-        {lokalizacja?.lat != null && lokalizacja?.lng != null && (
+        {user && lokalizacja?.lat != null && lokalizacja?.lng != null && (
           <LocationPreview lat={lokalizacja.lat} lng={lokalizacja.lng} nazwa={lokalizacja.nazwa} />
         )}
 
-        <form id="dodaj-post-form" onSubmit={handleSubmit} className="px-5 py-4 space-y-4">
+        {user && <form id="dodaj-post-form" onSubmit={handleSubmit} className="px-5 py-4 space-y-4">
 
           {/* Gatunek */}
           <div className="space-y-1.5">
@@ -287,31 +345,32 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
             <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">{blad}</div>
           )}
 
-        </form>
+        </form>}
         </div>
 
-        {/* Przycisk submit — sticky na dole, zawsze widoczny */}
-        <div
-          className="px-5 py-4 border-t border-gray-100 bg-white flex-shrink-0"
-          style={{ paddingBottom: "max(16px, env(safe-area-inset-bottom, 16px))" }}
-        >
-          <button
-            type="submit"
-            form="dodaj-post-form"
-            disabled={loading || !typRyby}
-            className="w-full bg-blue-600 text-white py-4 rounded-xl font-semibold text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all shadow-sm"
+        {/* Przycisk submit — sticky na dole, tylko dla zalogowanych */}
+        {user && (
+          <div
+            className="px-5 pt-4 pb-6 sm:pb-4 border-t border-gray-100 bg-white flex-shrink-0"
           >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                </svg>
-                {t.post.saving}
-              </span>
-            ) : t.post.publish}
-          </button>
-        </div>
+            <button
+              type="submit"
+              form="dodaj-post-form"
+              disabled={loading || !typRyby}
+              className="w-full bg-blue-600 text-white py-4 rounded-xl font-semibold text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all shadow-sm"
+            >
+              {loading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                  </svg>
+                  {t.post.saving}
+                </span>
+              ) : t.post.publish}
+            </button>
+          </div>
+        )}
 
       </div>
     </div>

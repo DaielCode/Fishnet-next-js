@@ -3,21 +3,12 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
-import { doc, updateDoc, increment, deleteDoc } from "firebase/firestore";
+import { doc, updateDoc, increment, deleteDoc, arrayUnion, arrayRemove } from "firebase/firestore";
 import { ref, deleteObject } from "firebase/storage";
 import { db, auth, storage } from "@/lib/firebase";
 import { useLanguage } from "@/context/LanguageContext";
 import type { Post } from "@/types";
 
-const LS_KEY = "fishnet_liked";
-
-function getLikedSet(): Set<string> {
-  try { return new Set(JSON.parse(localStorage.getItem(LS_KEY) ?? "[]")); }
-  catch { return new Set(); }
-}
-function saveLikedSet(set: Set<string>) {
-  localStorage.setItem(LS_KEY, JSON.stringify([...set]));
-}
 
 interface Props {
   post: Post;
@@ -26,8 +17,9 @@ interface Props {
 }
 
 export default function PostCard({ post, authorNick, authorAvatar }: Props) {
-  const [likes, setLikes] = useState(post.likes);
-  const [liked, setLiked] = useState(() => getLikedSet().has(post.id));
+  const uid = auth.currentUser?.uid;
+  const [likes, setLikes] = useState(Math.max(0, post.likes ?? 0));
+  const [liked, setLiked] = useState(() => !!uid && (post.likedBy ?? []).includes(uid));
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [deleted, setDeleted] = useState(false);
   const { t } = useLanguage();
@@ -37,13 +29,14 @@ export default function PostCard({ post, authorNick, authorAvatar }: Props) {
   const isOwner = auth.currentUser?.uid === post.user_id;
 
   async function handleLike() {
+    if (!uid) return;
     const nowLiked = !liked;
     setLiked(nowLiked);
-    setLikes((prev) => prev + (nowLiked ? 1 : -1));
-    const set = getLikedSet();
-    nowLiked ? set.add(post.id) : set.delete(post.id);
-    saveLikedSet(set);
-    await updateDoc(doc(db, "posty", post.id), { likes: increment(nowLiked ? 1 : -1) });
+    setLikes((prev) => Math.max(0, prev + (nowLiked ? 1 : -1)));
+    await updateDoc(doc(db, "posty", post.id), {
+      likes: increment(nowLiked ? 1 : -1),
+      likedBy: nowLiked ? arrayUnion(uid) : arrayRemove(uid),
+    });
   }
 
   async function handleDelete() {
@@ -113,10 +106,12 @@ export default function PostCard({ post, authorNick, authorAvatar }: Props) {
         <div className="px-4 pt-3 flex items-center justify-between border-b border-gray-100 pb-3">
           <button
             onClick={handleLike}
-            className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-all cursor-pointer select-none ${
-              liked
-                ? "text-red-500 bg-red-50"
-                : "text-gray-500 hover:text-red-400 hover:bg-red-50"
+            className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-all select-none ${
+              !auth.currentUser
+                ? "cursor-not-allowed opacity-60"
+                : liked
+                  ? "text-red-500 bg-red-50 cursor-pointer"
+                  : "text-gray-500 hover:text-red-400 hover:bg-red-50 cursor-pointer"
             }`}
           >
             <svg

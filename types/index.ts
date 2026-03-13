@@ -56,4 +56,5 @@ export interface Post {
   dlugosc_cm?: number;
   timestamp: Timestamp;
   likes: number;
+  likedBy?: string[];
 }

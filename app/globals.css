@@ -2,6 +2,7 @@
 
 /* ─── Zawsze tryb jasny — aplikacja zaprojektowana tylko dla light mode ─── */
 :root {
+  --map-bottom-offset: calc(68px + env(safe-area-inset-bottom, 0px));
   --background: #f8fafc;
   --foreground: #0f172a;
 
@@ -23,6 +24,12 @@
   --shadow-md:  0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.05);
   --shadow-lg:  0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.05);
   --shadow-xl:  0 20px 25px -5px rgb(0 0 0 / 0.08), 0 8px 10px -6px rgb(0 0 0 / 0.05);
+}
+
+@media (min-width: 640px) {
+  :root {
+    --map-bottom-offset: 0px;
+  }
 }
 
 @theme inline {
@@ -50,6 +57,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   line-height: 1.6;
+  overscroll-behavior-y: contain;
 }
 
 /* Wymuszamy jawne kolory na wszystkich nagłówkach — zabezpieczenie */
@@ -77,16 +85,26 @@ input, select, textarea {
 
 /* Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 3px;
+  background: #e2e8f0;
+  border-radius: 100px;
+  transition: background 0.2s;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #e2e8f0 transparent;
 }

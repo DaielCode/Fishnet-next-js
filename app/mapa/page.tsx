@@ -21,9 +21,10 @@ interface Lokalizacja {
 export default function MapaPage() {
   const [lokalizacja, setLokalizacja] = useState<Lokalizacja | null>(null);
   const [propozycjaOpen, setPropozycjaOpen] = useState(false);
-  const { user, isAdmin } = useAuth();
+  const { user, loading, isAdmin } = useAuth();
 
   function handleStanowiskoClick(stanowisko: Stanowisko, lowisko: Lowisko) {
+    if (!user) return;
     setLokalizacja({
       nazwa: lowisko.nazwa,
       lowisko_id: lowisko.id,
@@ -35,6 +36,7 @@ export default function MapaPage() {
   }
 
   function handleLowiskoClick(info: { nazwa: string; lowisko_id: string; lat: number; lng: number }) {
+    if (!user) return;
     setLokalizacja({
       nazwa: info.nazwa,
       lowisko_id: info.lowisko_id,
@@ -44,17 +46,29 @@ export default function MapaPage() {
     });
   }
 
+  function handleMapClick(lat: number, lng: number) {
+    if (!user) return;
+    setLokalizacja({
+      nazwa: "Mapa",
+      lowisko_id: "",
+      stanowisko_id: "",
+      lat,
+      lng,
+    });
+  }
+
   return (
     <>
-      <div className="fixed inset-x-0 top-[57px] bottom-[64px] sm:bottom-0 overflow-hidden">
+      <div className="fixed inset-x-0 top-[57px] overflow-hidden" style={{ bottom: 'var(--map-bottom-offset)' }}>
         <Suspense fallback={null}>
           <MapView
             onStanowiskoClick={handleStanowiskoClick}
             onLowiskoClick={handleLowiskoClick}
+            onMapClick={handleMapClick}
           />
         </Suspense>
       </div>
-      {user && !isAdmin && (
+      {!loading && user && !isAdmin && (
         <button
           onClick={() => setPropozycjaOpen(true)}
           style={{ position: "fixed", bottom: 80, right: 16, zIndex: 1000 }}

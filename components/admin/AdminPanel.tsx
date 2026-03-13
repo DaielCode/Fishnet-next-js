@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useAuth } from "@/hooks/useAuth";
 import { db } from "@/lib/firebase";
@@ -8,6 +8,7 @@ import {
   collection, getDocs, doc, updateDoc, deleteDoc, addDoc,
   GeoPoint, query, orderBy, onSnapshot,
 } from "firebase/firestore";
+import "leaflet/dist/leaflet.css";
 import type { Post, Lowisko, LowiskoPropozycja } from "@/types";
 import type { OsmZbiornik } from "./OsmLowiskoPicker";
 
@@ -159,7 +160,7 @@ function UzytkownicyTab() {
             className="flex items-center gap-3 bg-white border border-gray-100 rounded-xl px-3 sm:px-4 py-3 shadow-sm"
           >
             {u.avatar ? (
-              <img src={u.avatar} alt={u.nick} className="w-9 h-9 rounded-full flex-shrink-0" />
+              <img src={u.avatar} alt={u.nick} referrerPolicy="no-referrer" className="w-9 h-9 rounded-full flex-shrink-0" />
             ) : (
               <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-sm flex-shrink-0">
                 {u.nick?.[0]?.toUpperCase() ?? "?"}
@@ -543,6 +544,7 @@ function PostyTab() {
                   <img
                     src={post.zdjecia[0]}
                     alt="połów"
+                    referrerPolicy="no-referrer"
                     className="w-20 rounded-lg object-contain flex-shrink-0"
                   />
                 )}
@@ -575,6 +577,97 @@ function PostyTab() {
         )}
       </div>
     </div>
+  );
+}
+
+// ─── Mini podgląd mapy ───────────────────────────────────────────────────────
+
+function MiniMapPreview({ lat, lng, geojsonData, kolor }: {
+  lat: number;
+  lng: number;
+  geojsonData?: string;
+  kolor?: string;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    let cancelled = false;
+
+    import("leaflet").then((L) => {
+      if (cancelled || !containerRef.current) return;
+
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+
+      const map = L.map(containerRef.current, {
+        center: [lat, lng],
+        zoom: 13,
+        zoomControl: false,
+        attributionControl: false,
+        dragging: false,
+        scrollWheelZoom: false,
+        doubleClickZoom: false,
+        touchZoom: false,
+        keyboard: false,
+      });
+      mapRef.current = map;
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+      }).addTo(map);
+
+      setTimeout(() => { if (!cancelled) map.invalidateSize(); }, 50);
+
+      if (geojsonData) {
+        try {
+          const geojson = JSON.parse(geojsonData);
+          const layer = L.geoJSON(geojson, {
+            style: {
+              color: kolor ?? "#1d4ed8",
+              weight: 2,
+              fillOpacity: 0.25,
+              fillColor: kolor ?? "#1d4ed8",
+            },
+          }).addTo(map);
+          map.fitBounds(layer.getBounds(), { padding: [12, 12] });
+        } catch {
+          L.circleMarker([lat, lng], {
+            radius: 10,
+            color: kolor ?? "#1d4ed8",
+            fillColor: kolor ?? "#1d4ed8",
+            fillOpacity: 0.5,
+            weight: 2,
+          }).addTo(map);
+        }
+      } else {
+        L.circleMarker([lat, lng], {
+          radius: 10,
+          color: kolor ?? "#1d4ed8",
+          fillColor: kolor ?? "#1d4ed8",
+          fillOpacity: 0.5,
+          weight: 2,
+        }).addTo(map);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, [lat, lng, geojsonData, kolor]);
+
+  return (
+    <div
+      ref={containerRef}
+      style={{ height: 160, borderRadius: 12, overflow: "hidden", background: "#e5e7eb" }}
+    />
   );
 }
 
@@ -637,11 +730,21 @@ function PropozycjeTab() {
           const date = p.timestamp?.toDate?.()?.toLocaleDateString("pl-PL", {
             day: "numeric", month: "short", year: "numeric",
           }) ?? "";
+          const lat = p.lokalizacja?.latitude;
+          const lng = p.lokalizacja?.longitude;
           return (
             <div
               key={p.id}
               className="bg-white border border-gray-100 rounded-2xl px-4 py-4 shadow-sm space-y-3"
             >
+              {lat != null && lng != null && (
+                <MiniMapPreview
+                  lat={lat}
+                  lng={lng}
+                  geojsonData={p.geojson_data}
+                  kolor={p.kolor}
+                />
+              )}
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 mb-0.5">
@@ -653,7 +756,7 @@ function PropozycjeTab() {
                   </div>
                   {p.opis && <p className="text-xs text-gray-500 mb-1">{p.opis}</p>}
                   <p className="text-xs text-gray-400 font-mono">
-                    {p.lokalizacja?.latitude?.toFixed(4)}, {p.lokalizacja?.longitude?.toFixed(4)}
+                    {lat?.toFixed(4)}, {lng?.toFixed(4)}
                     {p.geojson_data ? " · GeoJSON ✓" : ""}
                   </p>
                   <p className="text-xs text-gray-300 mt-0.5">

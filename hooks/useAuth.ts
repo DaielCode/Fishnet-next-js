@@ -31,15 +31,16 @@ export function useAuth() {
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
+      setLoading(false);
       if (firebaseUser) {
-        const snap = await getDoc(doc(db, "users", firebaseUser.uid));
-        setIsAdmin(snap.data()?.isAdmin === true);
+        getDoc(doc(db, "users", firebaseUser.uid))
+          .then((snap) => setIsAdmin(snap.data()?.isAdmin === true))
+          .catch(() => setIsAdmin(false));
       } else {
         setIsAdmin(false);
       }
-      setLoading(false);
     });
     return unsubscribe;
   }, []);

@@ -7,6 +7,20 @@ import { collection, addDoc, GeoPoint, Timestamp } from "firebase/firestore";
 import { useAuth } from "@/hooks/useAuth";
 import type { OsmZbiornik } from "@/components/admin/OsmLowiskoPicker";
 
+const LoginPrompt = ({ onLogin }: { onLogin: () => void }) => (
+  <div className="flex flex-col items-center justify-center py-16 px-6 text-center gap-4">
+    <div className="text-5xl">🔒</div>
+    <p className="font-semibold text-gray-900">Musisz być zalogowany</p>
+    <p className="text-sm text-gray-400">Zaloguj się, aby zaproponować łowisko.</p>
+    <button
+      onClick={onLogin}
+      className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors cursor-pointer"
+    >
+      Zaloguj się przez Google
+    </button>
+  </div>
+);
+
 const OsmLowiskoPickerDynamic = dynamic(() => import("@/components/admin/OsmLowiskoPicker"), {
   ssr: false,
   loading: () => <div className="text-center py-10 text-sm text-gray-400">Ładowanie mapy...</div>,
@@ -19,7 +33,7 @@ interface Props {
 }
 
 export default function ZaproponujLowiskoModal({ onClose }: Props) {
-  const { user } = useAuth();
+  const { user, loginWithGoogle } = useAuth();
   const [step, setStep] = useState<Step>("idle");
   const [nazwa, setNazwa] = useState("");
   const [opis, setOpis] = useState("");
@@ -103,7 +117,9 @@ export default function ZaproponujLowiskoModal({ onClose }: Props) {
         </div>
 
         <div className="p-5">
-          {done ? (
+          {!user ? (
+            <LoginPrompt onLogin={loginWithGoogle} />
+          ) : done ? (
             <div className="text-center py-8 space-y-3">
               <div className="text-4xl">✅</div>
               <p className="font-semibold text-gray-900">Propozycja wysłana!</p>

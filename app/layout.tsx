@@ -29,7 +29,7 @@ export default function RootLayout({
       <body className="bg-gray-50 min-h-screen" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" }}>
         <LanguageProvider>
           <Navbar />
-          <main className="sm:pb-0 pb-16">{children}</main>
+          <main style={{ paddingBottom: "var(--map-bottom-offset)" }}>{children}</main>
         </LanguageProvider>
         <PWARegister />
       </body>
