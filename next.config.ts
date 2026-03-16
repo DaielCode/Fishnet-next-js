@@ -1,37 +1,59 @@
+/**
+ * next.config.ts — konfiguracja Next.js dla aplikacji Fishnet.
+ *
+ * Eksportowana konfiguracja jest opakowana przez `withSentryConfig` który:
+ * - dodaje automatyczne instrumentowanie błędów
+ * - pomija generowanie source map (disable: true) — zmniejsza rozmiar buildu
+ * - wycisza logi Sentry podczas budowania (silent: true)
+ */
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
 
 const nextConfig: NextConfig = {
+  // Generuj statyczne pliki HTML zamiast serwera Node.js
+  // Wymagane dla Firebase Hosting (serwuje tylko pliki statyczne)
   output: "export",
+
+  // Każda ścieżka kończy się slashem: /feed/ zamiast /feed
+  // Firebase Hosting lepiej sobie radzi ze slashami przy statycznym eksporcie
   trailingSlash: true,
+
   async headers() {
     return [
       {
-        source: "/(.*)",
+        source: "/(.*)", // dotyczy wszystkich ścieżek
         headers: [
+          // COOP (Cross-Origin-Opener-Policy) ustawione na "unsafe-none"
+          // Wymagane dla Google OAuth popup — domyślne "same-origin" blokuje
+          // komunikację między oknem aplikacji a popupem Google Sign-In
           { key: "Cross-Origin-Opener-Policy", value: "unsafe-none" },
         ],
       },
     ];
   },
+
   images: {
+    // Wyłącza optymalizację obrazów Next.js (Image Optimization API)
+    // Wymagane przy `output: "export"` — optymalizacja wymaga serwera
     unoptimized: true,
+
+    // Dozwolone zewnętrzne domeny dla komponentu <Image>
     remotePatterns: [
       {
         protocol: "https",
-        hostname: "lh3.googleusercontent.com",
+        hostname: "lh3.googleusercontent.com", // avatary Google (photoURL z Firebase Auth)
       },
       {
         protocol: "https",
-        hostname: "firebasestorage.googleapis.com",
+        hostname: "firebasestorage.googleapis.com", // zdjęcia z Firebase Storage
       },
     ],
   },
 };
 
 export default withSentryConfig(nextConfig, {
-  silent: true,
-  telemetry: false,
-  sourcemaps: { disable: true },
-  bundleSizeOptimizations: { excludeDebugStatements: true },
+  silent: true,          // nie pokazuj logów Sentry w trakcie budowania
+  telemetry: false,      // wyłącz telemetrię Sentry CLI
+  sourcemaps: { disable: true }, // nie generuj source map — zmniejsza rozmiar buildu
+  bundleSizeOptimizations: { excludeDebugStatements: true }, // usuń debug code z produkcji
 });

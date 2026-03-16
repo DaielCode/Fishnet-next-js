@@ -1,5 +1,19 @@
 "use client";
 
+/**
+ * ZaproponujLowiskoModal — modal propozycji nowego łowiska przez użytkownika.
+ *
+ * Trzyetapowy wizard:
+ * 1. `"idle"`    — wybór metody: z OSM lub ręcznie
+ * 2. `"picking"` — OsmLowiskoPicker: wyszukiwanie i wybór zbiornika z OSM
+ * 3. `"form"`    — formularz: nazwa, opis, współrzędne, kolor, opcjonalny GeoJSON
+ *
+ * Po zatwierdzeniu formularz tworzy dokument w Firestore `lowiska_propozycje`
+ * ze statusem `"oczekuje"` — admin musi zaakceptować propozycję w panelu.
+ *
+ * GeoJSON z OSM jest serializowany do stringa (JSON.stringify) przed zapisem,
+ * bo Firestore nie obsługuje zagnieżdżonych tablic w polach dokumentu.
+ */
 import { useState } from "react";
 import dynamic from "next/dynamic";
 import { db } from "@/lib/firebase";
@@ -7,6 +21,7 @@ import { collection, addDoc, GeoPoint, Timestamp } from "firebase/firestore";
 import { useAuth } from "@/hooks/useAuth";
 import type { OsmZbiornik } from "@/components/admin/OsmLowiskoPicker";
 
+/** Prompt dla niezalogowanych — blokuje formularz i zachęca do logowania */
 const LoginPrompt = ({ onLogin }: { onLogin: () => void }) => (
   <div className="flex flex-col items-center justify-center py-16 px-6 text-center gap-4">
     <div className="text-5xl">🔒</div>
@@ -21,11 +36,13 @@ const LoginPrompt = ({ onLogin }: { onLogin: () => void }) => (
   </div>
 );
 
+// OsmLowiskoPicker używa Leaflet — musi być ładowany tylko client-side
 const OsmLowiskoPickerDynamic = dynamic(() => import("@/components/admin/OsmLowiskoPicker"), {
   ssr: false,
   loading: () => <div className="text-center py-10 text-sm text-gray-400">Ładowanie mapy...</div>,
 });
 
+/** Kroki wizarda: wybór metody → picker OSM → formularz potwierdzenia */
 type Step = "idle" | "picking" | "form";
 
 interface Props {
@@ -46,14 +63,22 @@ export default function ZaproponujLowiskoModal({ onClose }: Props) {
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
 
+  /**
+   * Callback z OsmLowiskoPicker — wywołany gdy użytkownik potwierdzi zbiornik z OSM.
+   * Wypełnia stan formularza danymi z wybranego zbiornika i przechodzi do kroku "form".
+   * `autoName` pochodzi z Nominatim reverse geocoding lub z tagu OSM `name`.
+   */
   function handleOsmConfirm(zbiornik: OsmZbiornik, autoName: string) {
     setNazwa(autoName);
+    // centroid[0] = lat, centroid[1] = lng (kolejność Leaflet [lat, lng])
     setLat(String(zbiornik.centroid[0]));
     setLng(String(zbiornik.centroid[1]));
+    // Opakowujemy pojedynczy Feature w FeatureCollection (standard GeoJSON)
     setOsmGeojson({ type: "FeatureCollection", features: [zbiornik.geojson] });
     setStep("form");
   }
 
+  /** Resetuje cały formularz do stanu początkowego (krok "idle") */
   function resetForm() {
     setNazwa("");
     setOpis("");
@@ -66,12 +91,24 @@ export default function ZaproponujLowiskoModal({ onClose }: Props) {
     setError("");
   }
 
+  /**
+   * Wysyła propozycję łowiska do Firestore — kolekcja `lowiska_propozycje`.
+   *
+   * Walidacja przed zapisem:
+   * - nazwa jest wymagana
+   * - użytkownik musi być zalogowany
+   * - lat/lng muszą być poprawnymi liczbami (akceptuje przecinek jako separator dziesiętny)
+   *
+   * GeoJSON zapisywany jako string bo Firestore nie obsługuje zagnieżdżonych tablic.
+   * Status `"oczekuje"` — admin musi zatwierdzić propozycję w panelu admina.
+   */
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     if (!nazwa.trim()) return setError("Podaj nazwę łowiska.");
     if (!user) return setError("Musisz być zalogowany.");
 
+    // Źródło GeoJSON: albo z OSM Picker albo z wgranego pliku
     let geojson_data: GeoJSON.FeatureCollection | undefined;
     if (osmGeojson) {
       geojson_data = osmGeojson;
@@ -84,6 +121,7 @@ export default function ZaproponujLowiskoModal({ onClose }: Props) {
       }
     }
 
+    // Akceptujemy zarówno "49.9" jak i "49,9" (polska notacja dziesiętna)
     const latNum = parseFloat(lat.replace(",", "."));
     const lngNum = parseFloat(lng.replace(",", "."));
     if (isNaN(latNum) || isNaN(lngNum)) return setError("Podaj poprawne współrzędne.");
@@ -94,14 +132,15 @@ export default function ZaproponujLowiskoModal({ onClose }: Props) {
         user_id: user.uid,
         nazwa: nazwa.trim(),
         opis: opis.trim(),
-        lokalizacja: new GeoPoint(latNum, lngNum),
+        lokalizacja: new GeoPoint(latNum, lngNum), // Firestore typ geograficzny
         kolor,
-        status: "oczekuje",
+        status: "oczekuje", // workflow: oczekuje → zaakceptowane/odrzucone
         timestamp: Timestamp.now(),
       };
+      // GeoJSON tylko jeśli podano — pole opcjonalne w schemacie
       if (geojson_data) docData.geojson_data = JSON.stringify(geojson_data);
       await addDoc(collection(db, "lowiska_propozycje"), docData);
-      setDone(true);
+      setDone(true); // przełącza UI na ekran potwierdzenia
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Błąd zapisu.");
     }

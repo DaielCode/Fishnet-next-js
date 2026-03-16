@@ -1,5 +1,19 @@
 "use client";
 
+/**
+ * PostCard — karta pojedynczego połowu w feedzie.
+ *
+ * Wyświetla:
+ * - Avatar i nick autora (link do profilu)
+ * - Zdjęcia ryby (lightbox po kliknięciu)
+ * - Typ ryby, wagę, długość
+ * - Lokalizację połowu
+ * - Liczbę polubień z obsługą optimistic update
+ * - Przycisk usunięcia (widoczny tylko dla autora)
+ *
+ * Dane są aktualizowane bezpośrednio w Firestore (bez pośrednika),
+ * co daje natychmiastową odpowiedź UI (optimistic likes).
+ */
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
@@ -18,49 +32,78 @@ interface Props {
 
 export default function PostCard({ post, authorNick, authorAvatar }: Props) {
   const uid = auth.currentUser?.uid;
+
+  /**
+   * `likes` i `liked` — stan lokalny inicjalizowany z danych Firestore.
+   * Po każdym like/unlike aktualizujemy oba stany lokalnie (optimistic update)
+   * PRZED wysłaniem do Firestore — użytkownik widzi zmianę natychmiast.
+   *
+   * `Math.max(0, ...)` — ochrona przed ujemną liczbą (edge case: duplikaty requestów).
+   * `post.likedBy ?? []` — pole może nie istnieć w starszych dokumentach (migracja danych).
+   * Inicjalizator funkcyjny `() => ...` — obliczany raz przy mount, nie przy każdym render.
+   */
   const [likes, setLikes] = useState(Math.max(0, post.likes ?? 0));
   const [liked, setLiked] = useState(() => !!uid && (post.likedBy ?? []).includes(uid));
   const [lightbox, setLightbox] = useState<string | null>(null);
-  const [deleted, setDeleted] = useState(false);
+  const [deleted, setDeleted] = useState(false); // po usunięciu komponent renderuje null
   const { t } = useLanguage();
 
+  // Tłumaczenie klucza gatunku (np. "Karp" → "Carp" po EN) z fallbackiem do oryginalnego klucza
   const fishDict = t.fish as Record<string, string>;
   const fishLabel = fishDict[post.typ_ryby] ?? post.typ_ryby;
-  const isOwner = auth.currentUser?.uid === post.user_id;
+  const isOwner = auth.currentUser?.uid === post.user_id; // tylko właściciel widzi przycisk "Usuń"
 
+  /**
+   * Optimistic like/unlike — natychmiastowy feedback UI.
+   *
+   * `increment(1/-1)` — atomowa operacja Firestore (bezpieczna przy równoległych kliknięciach).
+   * `arrayUnion/arrayRemove` — atomowe operacje na tablicy `likedBy`.
+   * Bez transakcji: jeśli request się nie powiedzie, UI jest niezgodny z bazą.
+   * Trade-off: prostota vs. spójność (akceptowalne dla polubień).
+   */
   async function handleLike() {
-    if (!uid) return;
+    if (!uid) return; // niezalogowany — ignore (przycisk jest disabled)
     const nowLiked = !liked;
-    setLiked(nowLiked);
-    setLikes((prev) => Math.max(0, prev + (nowLiked ? 1 : -1)));
+    setLiked(nowLiked);                                               // optimistic UI
+    setLikes((prev) => Math.max(0, prev + (nowLiked ? 1 : -1)));     // optimistic UI
     await updateDoc(doc(db, "posty", post.id), {
-      likes: increment(nowLiked ? 1 : -1),
-      likedBy: nowLiked ? arrayUnion(uid) : arrayRemove(uid),
+      likes: increment(nowLiked ? 1 : -1),             // atomowy increment/decrement
+      likedBy: nowLiked ? arrayUnion(uid) : arrayRemove(uid), // atomowe dodanie/usunięcie UID
     });
   }
 
+  /**
+   * Usuwa post wraz ze wszystkimi zdjęciami z Firebase Storage.
+   * Optimistic delete: setDeleted(true) ukrywa komponent natychmiast.
+   * Rollback: setDeleted(false) jeśli deleteDoc się nie powiedzie.
+   *
+   * Zdjęcia usuwane pojedynczo w pętli (nie Promise.all) — błąd jednego
+   * nie blokuje usunięcia pozostałych (`try/catch` wewnątrz pętli).
+   * `ref(storage, url)` — Storage ref z pełnego URL (Firebase Storage SDK obsługuje to).
+   */
   async function handleDelete() {
     if (!window.confirm(t.post.confirmDelete)) return;
-    setDeleted(true);
+    setDeleted(true); // natychmiast ukryj kartę — nie czekaj na Firestore
     try {
       for (const url of post.zdjecia ?? []) {
         try {
           const storageRef = ref(storage, url);
-          await deleteObject(storageRef);
-        } catch { /* pomiń */ }
+          await deleteObject(storageRef); // usuń każde zdjęcie z Storage
+        } catch { /* zdjęcie już usunięte lub błąd Storage — kontynuuj */ }
       }
-      await deleteDoc(doc(db, "posty", post.id));
+      await deleteDoc(doc(db, "posty", post.id)); // usuń dokument z Firestore
     } catch (err) {
       console.error("Błąd usuwania posta:", err);
-      setDeleted(false);
+      setDeleted(false); // rollback — pokaż kartę z powrotem jeśli błąd
     }
   }
 
+  // Formatowanie daty z Firestore Timestamp → czytelna data ("15 sty 2025")
   const date = post.timestamp?.toDate?.()?.toLocaleDateString("pl-PL", {
     day: "numeric", month: "short", year: "numeric",
   }) ?? "";
 
-  if (deleted) return null;
+  if (deleted) return null; // po usunięciu znikaj z listy bez przeładowania strony
 
   return (
     <>

@@ -1,26 +1,65 @@
 "use client";
 
+/**
+ * OsmLowiskoPicker — picker zbiornika wodnego z OpenStreetMap.
+ *
+ * Używany w dwóch miejscach:
+ * 1. `AdminPanel` — admin dodaje nowe łowisko do bazy
+ * 2. `ZaproponujLowiskoModal` — użytkownik proponuje łowisko
+ *
+ * Przepływ działania:
+ * 1. Wyszukaj miejscowość (autocomplete z POLSKIE_MIASTA + Photon API)
+ * 2. Mapa Leaflet pokazuje zbiorniki pobrane z Overpass API
+ * 3. Kliknij zbiornik aby go wybrać (Shift+klik = wybierz kilka)
+ * 4. Wiele zbiorników zostaje scalone w jeden MultiPolygon
+ * 5. Overpass API: próba 3 mirrorów z timeoutem 8s każdy
+ *
+ * Źródła zewnętrzne (bez autoryzacji):
+ * - Overpass API — geometria zbiorników z OSM
+ * - Photon (Komoot) — autocomplete nazw miejsc
+ * - Nominatim (OSM) — reverse geocoding (automatyczna nazwa łowiska)
+ */
 import { useState, useEffect, useRef, useCallback } from "react";
 import { POLSKIE_MIASTA } from "@/lib/miejscowosci";
 import { MapContainer, TileLayer, GeoJSON as GeoJSONLayer, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
+/**
+ * Reprezentacja zbiornika wodnego z OpenStreetMap.
+ * `osmType: "way"` = prosty polygon, `"relation"` = multipolygon (zbiornik z wyspami).
+ */
 export interface OsmZbiornik {
   osmId: number;
   osmType: "way" | "relation";
   name?: string;
-  centroid: [number, number]; // [lat, lng]
+  centroid: [number, number]; // [lat, lng] — centrum zbiornika (średnia współrzędnych)
   geojson: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
 }
 
 interface Props {
+  /** Callback gdy użytkownik kliknie "Dalej" z wybranym zbiornikiem */
   onConfirm: (zbiornik: OsmZbiornik, autoName: string) => void;
   onCancel: () => void;
 }
 
 // ─── Parsowanie odpowiedzi Overpass → GeoJSON ─────────────────────────────────
 
+/**
+ * Konwertuje jeden element z odpowiedzi Overpass API na OsmZbiornik.
+ *
+ * Overpass zwraca dwa typy elementów:
+ * - `way`      — prosty polygon (zbiornik bez wysp) z tablicą punktów geometry
+ * - `relation` — multipolygon (zbiornik z wyspami) z members[].role = "outer"/"inner"
+ *
+ * UWAGA: Overpass zwraca współrzędne jako {lat, lon} ale GeoJSON wymaga [lon, lat].
+ * Ta funkcja wykonuje konwersję przy budowaniu tablicy coords.
+ *
+ * GeoJSON wymaga zamkniętych pierścieni: ostatni punkt === pierwszy punkt.
+ * Overpass nie zawsze zamyka pierścień — sprawdzamy i dodajemy punkt jeśli brak.
+ *
+ * @returns OsmZbiornik lub null jeśli element jest nieprawidłowy (za mało punktów)
+ */
 function parseOverpassElement(el: Record<string, unknown>): OsmZbiornik | null {
   try {
     const tags = (el.tags ?? {}) as Record<string, string>;
@@ -28,12 +67,19 @@ function parseOverpassElement(el: Record<string, unknown>): OsmZbiornik | null {
     if (el.type === "way") {
       const geometry = el.geometry as Array<{ lat: number; lon: number }> | undefined;
       if (!geometry || geometry.length < 2) return null;
+
+      // Overpass: {lat, lon} → GeoJSON wymaga [lon, lat] (odwrócona kolejność!)
       const coords = geometry.map((p) => [p.lon, p.lat] as [number, number]);
+
+      // GeoJSON polygon musi być zamkniętym pierścieniem (pierwszy = ostatni punkt)
       if (coords[0][0] !== coords[coords.length - 1][0] || coords[0][1] !== coords[coords.length - 1][1]) {
         coords.push(coords[0]);
       }
+
+      // Centroid = średnia arytmetyczna wszystkich punktów geometrii
       const centroidLat = geometry.reduce((s, p) => s + p.lat, 0) / geometry.length;
       const centroidLng = geometry.reduce((s, p) => s + p.lon, 0) / geometry.length;
+
       return {
         osmId: el.id as number,
         osmType: "way",
@@ -42,34 +88,41 @@ function parseOverpassElement(el: Record<string, unknown>): OsmZbiornik | null {
         geojson: {
           type: "Feature",
           properties: { ...tags },
-          geometry: { type: "Polygon", coordinates: [coords] },
+          geometry: { type: "Polygon", coordinates: [coords] }, // coords w tablicy = outer ring
         },
       };
     }
 
     if (el.type === "relation") {
+      // Relation = zbiór members z rolami "outer" (brzeg) i "inner" (wyspa/dziura)
       const members = (el.members ?? []) as Array<{
         role: string;
         geometry: Array<{ lat: number; lon: number }>;
       }>;
-      const outers: [number, number][][] = [];
-      const inners: [number, number][][] = [];
+      const outers: [number, number][][] = []; // zewnętrzne pierścienie (granica zbiornika)
+      const inners: [number, number][][] = []; // wewnętrzne pierścienie (wyspy)
+
       for (const m of members) {
         if (!m.geometry?.length) continue;
         const ring = m.geometry.map((p) => [p.lon, p.lat] as [number, number]);
+        // Zamknij pierścień jeśli Overpass go nie zamknął
         if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) {
           ring.push(ring[0]);
         }
         if (m.role === "outer") outers.push(ring);
         else if (m.role === "inner") inners.push(ring);
       }
-      if (outers.length === 0) return null;
 
+      if (outers.length === 0) return null; // zbiornik bez granicy zewnętrznej = invalid
+
+      // Jeśli jeden outer → Polygon, wiele outerów → MultiPolygon
+      // inners są dodawane do każdego outera (uproszczenie — zwykle wyspa należy do jednego)
       const geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon =
         outers.length === 1
           ? { type: "Polygon", coordinates: [outers[0], ...inners] }
           : { type: "MultiPolygon", coordinates: outers.map((o) => [o, ...inners]) };
 
+      // Centroid wyliczany z pierwszego outer ringa (zwykle największy)
       const first = outers[0];
       const centroidLng = first.reduce((s, p) => s + p[0], 0) / first.length;
       const centroidLat = first.reduce((s, p) => s + p[1], 0) / first.length;
@@ -86,22 +139,34 @@ function parseOverpassElement(el: Record<string, unknown>): OsmZbiornik | null {
         },
       };
     }
-  } catch { /* pomiń uszkodzone */ }
+  } catch { /* pomiń uszkodzone elementy (np. brak geometry) */ }
   return null;
 }
 
 // ─── Scalanie wielu zbiorników w jeden MultiPolygon ───────────────────────────
 
+/**
+ * Scala tablicę wybranych zbiorników w jeden OsmZbiornik z geometrią MultiPolygon.
+ *
+ * Używane gdy użytkownik zaznaczył kilka zbiorników przez Shift+klik.
+ * Scenariusz: łowisko składające się z kilku połączonych stawów w OSM.
+ *
+ * - Polygon → bierzemy bezpośrednio jego coordinates (tablica pierścieni)
+ * - MultiPolygon → rozwijamy (spread) jego coordinates (tablica tablic pierścieni)
+ * - Centroid = uśredniony centroid wszystkich zaznaczonych zbiorników
+ * - Nazwa = pierwsza znaleziona nazwa wśród zbiorników (lub undefined)
+ * - osmId/osmType/properties = z pierwszego zbiornika na liście
+ */
 function mergeZbiorniki(list: OsmZbiornik[]): OsmZbiornik {
-  if (list.length === 1) return list[0];
+  if (list.length === 1) return list[0]; // optymalizacja — nic do scalania
 
   const coords: GeoJSON.Position[][][] = [];
   for (const z of list) {
     const g = z.geojson.geometry;
     if (g.type === "Polygon") {
-      coords.push(g.coordinates);
+      coords.push(g.coordinates); // Polygon.coordinates = Position[][] → opakowujemy w tablicę
     } else {
-      coords.push(...g.coordinates);
+      coords.push(...g.coordinates); // MultiPolygon.coordinates = Position[][][] → rozwijamy
     }
   }
 
@@ -111,7 +176,7 @@ function mergeZbiorniki(list: OsmZbiornik[]): OsmZbiornik {
   return {
     osmId: list[0].osmId,
     osmType: list[0].osmType,
-    name: list.find((z) => z.name)?.name,
+    name: list.find((z) => z.name)?.name, // pierwsza niepusta nazwa
     centroid: [centroidLat, centroidLng],
     geojson: {
       type: "Feature",
@@ -123,56 +188,91 @@ function mergeZbiorniki(list: OsmZbiornik[]): OsmZbiornik {
 
 // ─── Reverse geocoding → automatyczna nazwa ───────────────────────────────────
 
+/**
+ * Generuje automatyczną nazwę dla zbiornika na podstawie jego lokalizacji.
+ *
+ * Priorytet:
+ * 1. Tag `name` z OSM (np. "Jezioro Goczałkowickie") — używamy bez API
+ * 2. Nominatim reverse geocoding — szuka nazwy miejscowości przy centroidzie
+ *    Format: "{wieś/miasto}-Lake" (np. "Ligota-Lake")
+ * 3. Fallback: "Nowe łowisko" gdy API jest niedostępne
+ *
+ * Nominatim zwraca obiekt `address` z hierarchią administracyjną:
+ * village > town > city > municipality > county
+ */
 async function fetchAutoName(zbiornik: OsmZbiornik): Promise<string> {
-  if (zbiornik.name) return zbiornik.name;
+  if (zbiornik.name) return zbiornik.name; // tag name z OSM — nie potrzebujemy API
   try {
     const [lat, lng] = zbiornik.centroid;
     const res = await fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
-      { headers: { "Accept-Language": "pl" } }
+      { headers: { "Accept-Language": "pl" } } // odpowiedź po polsku
     );
     const data = await res.json();
     const addr = (data.address ?? {}) as Record<string, string>;
+    // Bierzemy najbardziej szczegółowy dostępny poziom administracyjny
     const place =
       addr.village ?? addr.town ?? addr.city ?? addr.municipality ?? addr.county ?? "Nieznane";
     return `${place}-Lake`;
   } catch {
-    return "Nowe łowisko";
+    return "Nowe łowisko"; // sieć niedostępna lub API zwróciło błąd
   }
 }
 
 // ─── Ładowanie zbiorników z Overpass ─────────────────────────────────────────
 
+/**
+ * Lista mirrorów Overpass API — próbowane po kolei aż jeden odpowie.
+ * Overpass-api.de bywa przeciążony, dlatego najpierw próbujemy szybsze mirrory.
+ */
 const OVERPASS_MIRRORS = [
   "https://overpass.kumi.systems/api/interpreter",
   "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
   "https://overpass-api.de/api/interpreter",
 ];
 
+/**
+ * Pobiera zbiorniki wodne z Overpass API dla aktualnego widoku mapy (bbox).
+ *
+ * Zapytanie Overpass szuka elementów z tagiem `natural=water`:
+ * - `way` = zwykły zbiornik (polygon)
+ * - `relation` = zbiornik z wyspami (multipolygon)
+ * `out geom` — Overpass zwraca pełną geometrię (nie tylko ID)
+ *
+ * Mechanizm retry z timeout:
+ * - Każdy mirror ma 8 sekund na odpowiedź (AbortController)
+ * - Jeśli mirror nie odpowie → próbujemy następny
+ * - Jeśli wszystkie zawiodą → rzucamy ostatni błąd
+ *
+ * Deduplikacja: Map(osmId → zbiornik) usuwa duplikaty gdy te same zbiorniki
+ * pojawią się w kilku mirrorach (teoretycznie niemożliwe, ale dla pewności).
+ */
 async function loadZbiornikiFromBbox(map: L.Map): Promise<OsmZbiornik[]> {
   const bounds = map.getBounds();
+  // Overpass bbox format: south,west,north,east (odwrotnie niż GeoJSON [w,s,e,n]!)
   const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
   const overpassQuery = `[out:json][timeout:30];(way["natural"="water"](${bbox});relation["natural"="water"](${bbox}););out geom;`;
 
   let lastError: unknown;
   for (const mirror of OVERPASS_MIRRORS) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+    const timer = setTimeout(() => controller.abort(), 8000); // 8s timeout na mirror
     try {
       const res = await fetch(mirror, { method: "POST", body: overpassQuery, signal: controller.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const parsed = (data.elements as unknown[])
         .map((el) => parseOverpassElement(el as Record<string, unknown>))
-        .filter(Boolean) as OsmZbiornik[];
+        .filter(Boolean) as OsmZbiornik[]; // filter(Boolean) usuwa null (nievalid elementy)
+      // Deduplikacja po osmId na wypadek duplikatów w danych
       return Array.from(new Map(parsed.map((z) => [z.osmId, z])).values());
     } catch (err) {
-      lastError = err;
+      lastError = err; // zapisz błąd i spróbuj następny mirror
     } finally {
-      clearTimeout(timer);
+      clearTimeout(timer); // zawsze czyść timer niezależnie od wyniku
     }
   }
-  throw lastError;
+  throw lastError; // wszystkie mirrory zawiodły
 }
 
 // ─── Wewnętrzny komponent mapy ────────────────────────────────────────────────
@@ -275,20 +375,30 @@ export default function OsmLowiskoPicker({ onConfirm, onCancel }: Props) {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /**
+   * Callback gdy Leaflet zakończy inicjalizację mapy.
+   * Zapisujemy referencję do instancji L.Map i ładujemy zbiorniki jeśli zoom jest OK.
+   */
   const handleMapReady = useCallback((map: L.Map) => {
     mapRef.current = map;
-    // Załaduj zbiorniki od razu po załadowaniu mapy
+    // Krótkie opóźnienie żeby tiles zdążyły się załadować przed pierwszym fetch
     if (map.getZoom() >= MIN_ZOOM) {
       setTimeout(() => triggerLoadZbiorniki(), 500);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * Callback po każdym ruchu mapy (pan/zoom). Debounced 2s — nie chcemy
+   * wysyłać zapytania do Overpass po każdym pikselu przesunięcia mapy.
+   * Poniżej MIN_ZOOM pokazujemy informację zamiast ładować (za dużo danych).
+   */
   const handleMoveEnd = useCallback(() => {
     if (!mapRef.current) return;
     if (mapRef.current.getZoom() < MIN_ZOOM) {
       setMessage({ type: "info", text: `Przybliż mapę (zoom ≥ ${MIN_ZOOM}), żeby automatycznie załadować zbiorniki.` });
       return;
     }
+    // Debounce: anuluj poprzedni timer i ustaw nowy 2s
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       triggerLoadZbiorniki();
@@ -315,15 +425,20 @@ export default function OsmLowiskoPicker({ onConfirm, onCancel }: Props) {
     }
   }
 
+  /**
+   * Obsługuje kliknięcie na polygon zbiornika.
+   * Shift+klik = multiselect (toggle), zwykły klik = zastępuje zaznaczenie.
+   * Używamy funkcji updater setState żeby uniknąć stale closure na selectedIds.
+   */
   function handleFeatureClick(z: OsmZbiornik, shift: boolean) {
     setSelectedIds((prev) => {
-      const next = new Set(prev);
+      const next = new Set(prev); // kopia — nie mutujemy stanu bezpośrednio
       if (shift) {
-        // Shift: toggle — dodaj lub usuń z zaznaczenia
+        // Shift+klik: toggle — jeśli był zaznaczony to odznacz, i odwrotnie
         if (next.has(z.osmId)) next.delete(z.osmId);
         else next.add(z.osmId);
       } else {
-        // Zwykłe kliknięcie: zastąp zaznaczenie
+        // Zwykły klik: zastąp całe zaznaczenie tylko tym zbiornikiem
         next.clear();
         next.add(z.osmId);
       }
@@ -331,13 +446,24 @@ export default function OsmLowiskoPicker({ onConfirm, onCancel }: Props) {
     });
   }
 
+  /**
+   * Efekt autocomplete — uruchamia się przy każdej zmianie searchQuery.
+   *
+   * Dwa źródła podpowiedzi działające równolegle:
+   * 1. POLSKIE_MIASTA — natychmiastowe (synchroniczne), sortowane według priorytetu
+   * 2. Photon API (komoot.io) — asynchroniczne, debounced 200ms
+   *    Filtrujemy tylko miejscowości (city/town/village/hamlet...), pomijamy ulice i POI.
+   *    Deduplikacja: pomijamy miejscowości które już są w wynikach z POLSKIE_MIASTA.
+   *
+   * AbortController anuluje poprzednie zapytanie Photon gdy user dalej pisze.
+   */
   useEffect(() => {
     const q = searchQuery.trim();
-    if (q.length < 2) { setSuggestions([]); return; }
+    if (q.length < 2) { setSuggestions([]); return; } // za krótkie zapytanie
 
     const ql = q.toLowerCase();
 
-    // Natychmiastowe: duże miasta
+    // Natychmiastowe wyniki z lokalnej listy (bez API, zero latency)
     const miastaMatches = POLSKIE_MIASTA
       .filter((m) => m.n.toLowerCase().includes(ql))
       .sort((a, b) => {
@@ -427,14 +553,19 @@ export default function OsmLowiskoPicker({ onConfirm, onCancel }: Props) {
     }
   }
 
+  /**
+   * Potwierdza wybór zbiorników i przekazuje dane do rodzica przez onConfirm.
+   * Jeśli wybrano wiele zbiorników — scala je w jeden MultiPolygon przed przekazaniem.
+   * Pobiera automatyczną nazwę z Nominatim (może chwilę zająć — stąd stan gettingName).
+   */
   async function handleConfirm() {
     if (selectedIds.size === 0) return;
     const selected = zbiorniki.filter((z) => selectedIds.has(z.osmId));
-    const merged = mergeZbiorniki(selected);
+    const merged = mergeZbiorniki(selected); // scala w MultiPolygon jeśli wiele wybranych
     setGettingName(true);
-    const autoName = await fetchAutoName(merged);
+    const autoName = await fetchAutoName(merged); // reverse geocoding lub tag name z OSM
     setGettingName(false);
-    onConfirm(merged, autoName);
+    onConfirm(merged, autoName); // przekaż do ZaproponujLowiskoModal lub AdminPanel
   }
 
   const selectedList = zbiorniki.filter((z) => selectedIds.has(z.osmId));

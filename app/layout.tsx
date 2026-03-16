@@ -1,3 +1,18 @@
+/**
+ * RootLayout — główny layout całej aplikacji Next.js App Router.
+ *
+ * Opakowuje każdą stronę w:
+ * - `LanguageProvider` — kontekst i18n (PL/EN/UA), język z localStorage
+ * - `Navbar`          — nawigacja top (desktop) + bottom tabs (mobile)
+ * - `PWARegister`     — rejestracja service workera dla trybu offline PWA
+ *
+ * CSS custom property `--map-bottom-offset` (z globals.css) kompensuje
+ * wysokość dolnego paska nawigacji na mobile, żeby mapa nie była zasłonięta.
+ *
+ * Metadata definiuje tytuł/opis strony i konfigurację PWA:
+ * - manifest.json — ikony, kolory, tryb standalone na telefonie
+ * - appleWebApp   — meta tagi dla "Dodaj do ekranu głównego" na iOS
+ */
 import type { Metadata } from "next";
 import "./globals.css";
 import Navbar from "@/components/ui/Navbar";

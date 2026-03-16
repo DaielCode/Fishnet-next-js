@@ -1,5 +1,17 @@
 "use client";
 
+/**
+ * MapaPage — strona mapy łowisk (/mapa).
+ *
+ * Koordynuje trzy komponenty lazy-loaded (ssr: false — wszystkie używają Leaflet):
+ * - `MapView`               — interaktywna mapa z łowiskami i stanowiskami
+ * - `DodajPostFeedModal`    — modal posta, otwierany po kliknięciu na mapie
+ * - `ZaproponujLowiskoModal`— modal propozycji łowiska (tylko dla zalogowanych)
+ *
+ * Stan `lokalizacja` przenosi dane klikniętego miejsca do modalu posta.
+ * Mapa zajmuje całą wysokość viewportu minus Navbar (top-[57px]) i
+ * minus dolną nawigację mobile (`--map-bottom-offset` z globals.css).
+ */
 import dynamic from "next/dynamic";
 import { useState, Suspense } from "react";
 import type { Stanowisko, Lowisko } from "@/types";
@@ -23,6 +35,10 @@ export default function MapaPage() {
   const [propozycjaOpen, setPropozycjaOpen] = useState(false);
   const { user, loading, isAdmin } = useAuth();
 
+  /**
+   * Klik na marker stanowiska — otwiera modal posta z danymi stanowiska.
+   * Niezalogowani użytkownicy są ignorowani (brak akcji).
+   */
   function handleStanowiskoClick(stanowisko: Stanowisko, lowisko: Lowisko) {
     if (!user) return;
     setLokalizacja({
@@ -35,6 +51,10 @@ export default function MapaPage() {
     });
   }
 
+  /**
+   * Klik na poligon łowiska (bez wyboru konkretnego stanowiska).
+   * stanowisko_id będzie pustym stringiem w poście.
+   */
   function handleLowiskoClick(info: { nazwa: string; lowisko_id: string; lat: number; lng: number }) {
     if (!user) return;
     setLokalizacja({
@@ -46,6 +66,10 @@ export default function MapaPage() {
     });
   }
 
+  /**
+   * Klik w dowolne miejsce na mapie (poza stanowiskiem/łowiskiem).
+   * Post będzie miał puste lowisko_id i stanowisko_id, tylko współrzędne.
+   */
   function handleMapClick(lat: number, lng: number) {
     if (!user) return;
     setLokalizacja({
@@ -59,25 +83,31 @@ export default function MapaPage() {
 
   return (
     <>
+      {/*
+       * Mapa zajmuje cały viewport pomiędzy Navbar (top-[57px]) a dolną nawigacją.
+       * `--map-bottom-offset` to CSS custom property ustawiane w globals.css:
+       * - Mobile: wartość = wysokość dolnego paska nawigacji (np. 64px)
+       * - Desktop: 0px (brak dolnego paska)
+       * `overflow: hidden` — zapobiega scroll na mapie (mapa ma własny scroll).
+       *
+       * `zaproponujVisible={!loading && !!user && !isAdmin}` — przycisk widoczny gdy:
+       * zalogowany + NIE admin (admin ma swój własny panel do dodawania łowisk).
+       *
+       * `<Suspense fallback={null}>` — wymagane przez Next.js gdy wewnątrz jest useSearchParams()
+       * (MapController w MapView używa useSearchParams).
+       */}
       <div className="fixed inset-x-0 top-[57px] overflow-hidden" style={{ bottom: 'var(--map-bottom-offset)' }}>
         <Suspense fallback={null}>
           <MapView
             onStanowiskoClick={handleStanowiskoClick}
             onLowiskoClick={handleLowiskoClick}
             onMapClick={handleMapClick}
+            zaproponujVisible={!loading && !!user && !isAdmin} // tylko zalogowani non-admini
+            onZaproponuj={() => setPropozycjaOpen(true)}
           />
         </Suspense>
       </div>
-      {!loading && user && !isAdmin && (
-        <button
-          onClick={() => setPropozycjaOpen(true)}
-          style={{ position: "fixed", bottom: 80, right: 16, zIndex: 1000 }}
-          className="bg-blue-600 text-white text-sm font-medium px-4 py-2.5 rounded-2xl shadow-lg hover:bg-blue-700 transition-colors flex items-center gap-2 sm:bottom-6"
-        >
-          <span>📍</span> Zaproponuj łowisko
-        </button>
-      )}
-      {lokalizacja && (
+{lokalizacja && (
         <DodajPostFeedModal
           lokalizacja={lokalizacja}
           onClose={() => setLokalizacja(null)}

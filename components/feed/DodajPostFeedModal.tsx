@@ -1,5 +1,22 @@
 "use client";
 
+/**
+ * DodajPostFeedModal — modal dodawania nowego posta z połowem.
+ *
+ * Może być otwarty z dwóch miejsc:
+ * 1. Po kliknięciu stanowiska/łowiska na mapie (prop `lokalizacja` jest wypełniony)
+ * 2. Przez przycisk w Navbar lub feedzie (bez `lokalizacja` — użytkownik sam wpisuje)
+ *
+ * Przepływ:
+ * 1. Wybór zdjęć (do 5 plików) — podgląd miniatur
+ * 2. Wybór gatunku ryby z listy `TYPY_RYB`
+ * 3. Opcjonalne: waga (kg) i długość (cm) z komponentem StepperInput
+ * 4. Treść opisu
+ * 5. Submit → upload wszystkich zdjęć do Firebase Storage równolegle → `addDoc` do `posty`
+ *
+ * `StepperInput` — pole liczbowe z +/- przyciskami i obsługą scroll kółkiem myszy.
+ * `LocationPreview` — miniatura mapy Leaflet (lazy-loaded, `ssr: false`).
+ */
 import { useState, useRef, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
@@ -8,17 +25,33 @@ import { db, auth, storage } from "@/lib/firebase";
 import { useLanguage } from "@/context/LanguageContext";
 import { useAuth } from "@/hooks/useAuth";
 
+/**
+ * LocationPreview używa Leaflet → musi być ładowany tylko client-side.
+ * `ssr: false` — Next.js nie próbuje renderować podczas SSR (Leaflet wymaga `window`).
+ * `loading` — placeholder animowany podczas ładowania dynamicznego chunk-a.
+ */
 const LocationPreview = dynamic(() => import("./LocationPreview"), { ssr: false, loading: () => (
   <div className="w-full rounded-xl bg-gray-100 animate-pulse" style={{ height: 140 }} />
 ) });
 
+/**
+ * Uploaduje jeden plik do Firebase Storage i zwraca publiczny URL.
+ * Ścieżka: `posty/{uid}/{timestamp}_{nazwaPliku}` — zapobiega kolizjom nazw.
+ * `uploadBytes` → synchroniczny upload całego pliku (nie resumable).
+ * `getDownloadURL` → publiczny URL do wyświetlenia w <img>.
+ */
 async function uploadToStorage(plik: File, uid: string): Promise<string> {
   const sciezka = `posty/${uid}/${Date.now()}_${plik.name}`;
   const storageRef = ref(storage, sciezka);
   await uploadBytes(storageRef, plik);
-  return getDownloadURL(storageRef);
+  return getDownloadURL(storageRef); // URL ważny bez uwierzytelnienia (reguły Storage: read=public)
 }
 
+/**
+ * Lista gatunków ryb dostępnych w selectbox.
+ * Klucze są polskojęzyczne — tłumaczenie przez `t.fish[plKey]` (i18n).
+ * Muszą zgadzać się z kluczami w `translations.ts > fish`.
+ */
 const TYPY_RYB = [
   "Karp", "Szczupak", "Okoń", "Lin", "Amur", "Sum", "Płoć", "Leszcz", "Sandacz",
   "Tołpyga", "Karaś", "Karaś srebrzysty", "Boleń", "Brzana", "Certa", "Jaź",
@@ -27,6 +60,7 @@ const TYPY_RYB = [
   "Wzdręga", "Ukleja", "Różanka", "Świnka", "Ciernik", "Stynka", "Inne",
 ];
 
+/** Wspólna klasa Tailwind dla pól input/select/textarea — utrzymana w jednym miejscu */
 const INPUT = "w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all";
 
 interface Lokalizacja {
@@ -43,6 +77,20 @@ interface Props {
   lokalizacja?: Lokalizacja;
 }
 
+/**
+ * StepperInput — pole numeryczne z przyciskami +/- i obsługą scroll kółka myszy.
+ *
+ * Dlaczego `onChangeRef` i `valueRef` zamiast bezpośrednich propsów w event listenerze?
+ * Problem: `addEventListener("wheel", handler)` tworzy domknięcie ze starą wartością
+ * `onChange` i `value` z momentu podpięcia listenera — stare closures.
+ * Rozwiązanie: Ref-y zawsze mają aktualną wartość (`.current` jest mutowalne).
+ * `onChangeRef.current = onChange` na każdym renderze — aktualizuje bez re-subscribe.
+ *
+ * `passive: false` — wymagane by `e.preventDefault()` działało na wheel events.
+ * (Domyślnie wheel jest passive = true i preventDefault jest ignorowane.)
+ *
+ * `toFixed(10)` — eliminuje błędy zmiennoprzecinkowe (0.1 + 0.2 ≠ 0.3 w JS).
+ */
 function StepperInput({
   value, onChange, step, min, placeholder, unit,
 }: {
@@ -54,14 +102,15 @@ function StepperInput({
   unit: string;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  // Ref do onChangeRef i valueRef — dostęp do aktualnych wartości z event listenera
   const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+  onChangeRef.current = onChange; // aktualizuj przy każdym render bez re-subscribe
   const valueRef = useRef(value);
-  valueRef.current = value;
+  valueRef.current = value; // aktualizuj przy każdym render bez re-subscribe
 
   function change(delta: number) {
-    const current = parseFloat(valueRef.current) || 0;
-    const next = Math.max(min, parseFloat((current + delta).toFixed(10)));
+    const current = parseFloat(valueRef.current) || 0; // pusty string → 0
+    const next = Math.max(min, parseFloat((current + delta).toFixed(10))); // toFixed fix floating point
     onChangeRef.current(String(next));
   }
 
@@ -69,13 +118,13 @@ function StepperInput({
     const el = inputRef.current;
     if (!el) return;
     const handler = (e: WheelEvent) => {
-      e.preventDefault();
+      e.preventDefault();      // blokuj przewijanie strony gdy scroll na polu
       e.stopPropagation();
-      change(e.deltaY < 0 ? step : -step);
+      change(e.deltaY < 0 ? step : -step); // scroll w górę = +, w dół = -
     };
-    el.addEventListener("wheel", handler, { passive: false });
-    return () => el.removeEventListener("wheel", handler);
-  }, [step, min]);
+    el.addEventListener("wheel", handler, { passive: false }); // passive:false = możemy preventDefault
+    return () => el.removeEventListener("wheel", handler); // cleanup przy odmontowaniu
+  }, [step, min]); // step/min się nie zmieniają, ale TypeScript chce je w deps
 
   return (
     <div className="flex items-center rounded-xl border border-gray-200 bg-gray-50 overflow-hidden focus-within:border-blue-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 transition-all">
@@ -108,48 +157,75 @@ function StepperInput({
 
 export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
   const { user, loginWithGoogle } = useAuth();
-  const [typRyby, setTypRyby] = useState("");
-  const [nazwaRyby, setNazwaRyby] = useState("");
+
+  // Stan formularza — każde pole osobny state
+  const [typRyby, setTypRyby] = useState("");       // klucz PL np. "Karp" (wymagany)
+  const [nazwaRyby, setNazwaRyby] = useState("");   // opcjonalna nazwa własna ("Wielki Karp")
   const [opis, setOpis] = useState("");
-  const [wagaKg, setWagaKg] = useState("");
+  const [wagaKg, setWagaKg] = useState("");         // string zamiast number — StepperInput operuje na stringach
   const [dlugoscCm, setDlugoscCm] = useState("");
-  const [zdjecia, setZdjecia] = useState<File[]>([]);
-  const [dragActive, setDragActive] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [zdjecia, setZdjecia] = useState<File[]>([]); // File objects — URL tworzony przez URL.createObjectURL
+  const [dragActive, setDragActive] = useState(false); // drag-over na dropzone
+  const [loading, setLoading] = useState(false);    // upload + Firestore w toku
   const [blad, setBlad] = useState<string | null>(null);
+
+  // dragY — przesunięcie modala podczas swipe-to-close na mobile (w pikselach)
   const [dragY, setDragY] = useState(0);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);    // ukryty <input type="file">
+
+  /**
+   * dragCounter — licznik aktywnych drag-over na dropzone.
+   * Problem: gdy użytkownik przeciąga nad dzieckiem div-a, przeglądarka
+   * wysyła dragLeave na rodzicu i dragEnter na dziecku — bez licznika
+   * `dragActive` migałby przy każdym przejściu na child element.
+   * Rozwiązanie: increment na dragEnter, decrement na dragLeave.
+   * setDragActive(false) tylko gdy counter === 0 (rzeczywiście opuściliśmy div).
+   */
   const dragCounter = useRef(0);
-  const swipeHandleRef = useRef<HTMLDivElement>(null);
-  const swipeStartY = useRef<number | null>(null);
-  const dragYRef = useRef(0);
+
+  const swipeHandleRef = useRef<HTMLDivElement>(null); // element uchwytu do przeciągania (mobile)
+  const swipeStartY = useRef<number | null>(null);     // Y pozycja początku swipe
+  const dragYRef = useRef(0);                          // sync ref — aktualna wartość dragY (dla event listenera)
   const { t } = useLanguage();
 
+  /**
+   * Swipe-to-close — zamknięcie modala gestem przeciągnięcia w dół (mobile).
+   *
+   * Jak działa:
+   * - touchstart → zapamiętaj startY
+   * - touchmove → oblicz delta (ruch w dół), przesuń modal (translateY)
+   *   `e.preventDefault()` — blokuje scrollowanie strony podczas przeciągania
+   *   `passive: false` — wymagane by preventDefault działało na touch events
+   * - touchend → jeśli delta > 80px → zamknij modal; inaczej wróć do pozycji 0
+   *
+   * `dragYRef` używany w event listenerze zamiast state (stare closures problem).
+   * CSS `transition: "transform 0.3s ease"` tylko gdy dragY === 0 (animacja powrotu).
+   */
   useEffect(() => {
     const el = swipeHandleRef.current;
     if (!el) return;
 
     function onTouchStart(e: TouchEvent) {
-      swipeStartY.current = e.touches[0].clientY;
+      swipeStartY.current = e.touches[0].clientY; // zapamiętaj punkt startowy
     }
     function onTouchMove(e: TouchEvent) {
       if (swipeStartY.current === null) return;
       const delta = e.touches[0].clientY - swipeStartY.current;
-      if (delta > 0) {
-        e.preventDefault();
+      if (delta > 0) { // tylko ruch w dół (nie blokuj swipe w górę = scroll)
+        e.preventDefault(); // blokuj scroll strony
         dragYRef.current = delta;
-        setDragY(delta);
+        setDragY(delta); // aktualizuj CSS translateY
       }
     }
     function onTouchEnd() {
-      if (dragYRef.current > 80) { onClose(); }
+      if (dragYRef.current > 80) { onClose(); } // > 80px w dół → zamknij
       dragYRef.current = 0;
-      setDragY(0);
+      setDragY(0); // wróć do pozycji 0 (z CSS transition = animacja powrotu)
       swipeStartY.current = null;
     }
 
     el.addEventListener("touchstart", onTouchStart, { passive: true });
-    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchmove", onTouchMove, { passive: false }); // passive:false dla preventDefault
     el.addEventListener("touchend", onTouchEnd, { passive: true });
     return () => {
       el.removeEventListener("touchstart", onTouchStart);
@@ -157,8 +233,26 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
       el.removeEventListener("touchend", onTouchEnd);
     };
   }, [onClose]);
+
+  // t.fish jest typowany jako Record<polskaNazwa, przetłumaczona> — rzutowanie dla bezpiecznego indexowania
   const fishDict = t.fish as Record<string, string>;
 
+  /**
+   * Obsługuje submit formularza — upload zdjęć + zapis do Firestore.
+   *
+   * Przepływ:
+   * 1. Walidacja: użytkownik zalogowany
+   * 2. Upload każdego zdjęcia do Storage (sekwencyjnie, nie równolegle — bo for...of)
+   *    Sekwencyjnie zamiast Promise.all — unikamy przeciążenia na słabym łączu
+   * 3. addDoc do kolekcji `posty` z wszystkimi danymi naraz
+   *
+   * Spread warunkowy `...(lokalizacja?.lat != null && { lat, lng })`:
+   * Dodaje pola lat/lng tylko jeśli lokalizacja ma koordynaty.
+   * Post bez lokalizacji nie będzie miał pinów na mapie (filtrowany w onSnapshot).
+   *
+   * `serverTimestamp()` — Firestore generuje timestamp po stronie serwera,
+   * niezależnie od zegara klienta (eliminuje problemy ze strefami czasowymi).
+   */
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!auth.currentUser) { setBlad(t.post.errorNotLoggedIn); return; }
@@ -167,25 +261,27 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
     try {
       const uid = auth.currentUser.uid;
       const zdjeciaUrls: string[] = [];
+      // Upload sekwencyjnie — nie obciążamy łącza równoległymi requestami
       for (const plik of zdjecia) {
         zdjeciaUrls.push(await uploadToStorage(plik, uid));
       }
       await addDoc(collection(db, "posty"), {
         user_id: uid,
-        stanowisko_id: lokalizacja?.stanowisko_id ?? "",
-        lowisko_id: lokalizacja?.lowisko_id ?? "",
+        stanowisko_id: lokalizacja?.stanowisko_id ?? "",   // "" gdy brak stanowiska
+        lowisko_id: lokalizacja?.lowisko_id ?? "",          // "" gdy brak łowiska
         lokalizacja_nazwa: lokalizacja?.nazwa ?? "",
+        // Spread warunkowy: dodaj lat/lng tylko jeśli są dostępne (post z mapy)
         ...(lokalizacja?.lat != null && { lat: lokalizacja.lat, lng: lokalizacja.lng }),
         typ_ryby: typRyby,
         nazwa_ryby: nazwaRyby,
-        zdjecia: zdjeciaUrls,
+        zdjecia: zdjeciaUrls,     // tablica URL-i (może być pusta)
         opis,
-        waga_kg: wagaKg ? parseFloat(wagaKg) : null,
+        waga_kg: wagaKg ? parseFloat(wagaKg) : null,       // null gdy nie podano
         dlugosc_cm: dlugoscCm ? parseFloat(dlugoscCm) : null,
-        timestamp: serverTimestamp(),
-        likes: 0,
+        timestamp: serverTimestamp(), // czas serwera, nie klienta
+        likes: 0,                 // startowa liczba polubień
       });
-      onClose();
+      onClose(); // zamknij modal po sukcesie
     } catch (err) {
       console.error("Błąd zapisu posta:", err);
       setBlad(t.post.errorGeneral);
@@ -194,6 +290,10 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
     }
   }
 
+  /**
+   * Dodaje pliki do listy zdjęć — filtruje tylko obrazy (odrzuca .pdf, .doc itp.).
+   * Wywoływana zarówno przez <input type="file"> jak i przez drag-and-drop.
+   */
   function addFiles(files: File[]) {
     const images = files.filter((f) => f.type.startsWith("image/"));
     if (images.length > 0) setZdjecia((prev) => [...prev, ...images]);
@@ -261,12 +361,14 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
 
         {user && <form id="dodaj-post-form" onSubmit={handleSubmit} className="px-5 py-4 space-y-4">
 
-          {/* Gatunek */}
+          {/* Gatunek ryby — wymagany (required), select z opcjami z TYPY_RYB */}
           <div className="space-y-1.5">
             <label className="text-sm font-semibold text-gray-700">{t.post.species} <span className="text-blue-500">*</span></label>
             <select value={typRyby} onChange={(e) => setTypRyby(e.target.value)} required className={INPUT}>
               <option value="">{t.post.speciesPlaceholder}</option>
               {TYPY_RYB.map((plKey) => (
+                // Zapisujemy klucz PL (np. "Karp"), ale wyświetlamy przetłumaczone (np. "Carp" po EN)
+                // fishDict[plKey] ?? plKey — fallback do klucza PL jeśli brak tłumaczenia
                 <option key={plKey} value={plKey}>{fishDict[plKey] ?? plKey}</option>
               ))}
             </select>
@@ -306,10 +408,11 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
             <input ref={fileRef} type="file" accept="image/*" multiple
               onChange={(e) => addFiles(Array.from(e.target.files ?? []))} className="hidden" />
             <div
-              onClick={() => fileRef.current?.click()}
+              onClick={() => fileRef.current?.click()} // klik → otwórz ukryty file picker
               onDragEnter={(e) => { e.preventDefault(); dragCounter.current++; setDragActive(true); }}
+              // dragCounter--: ustaw inactive tylko gdy naprawdę opuściliśmy cały div (nie jego dziecko)
               onDragLeave={(e) => { e.preventDefault(); dragCounter.current--; if (dragCounter.current === 0) setDragActive(false); }}
-              onDragOver={(e) => e.preventDefault()}
+              onDragOver={(e) => e.preventDefault()} // wymagane by onDrop działał (domyślnie browser blokuje drop)
               onDrop={(e) => { e.preventDefault(); dragCounter.current = 0; setDragActive(false); addFiles(Array.from(e.dataTransfer.files)); }}
               className={`w-full border-2 border-dashed rounded-xl py-5 flex flex-col items-center gap-1.5 cursor-pointer transition-all select-none ${
                 dragActive ? "border-blue-500 bg-blue-50 text-blue-600"
@@ -348,15 +451,21 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
         </form>}
         </div>
 
-        {/* Przycisk submit — sticky na dole, tylko dla zalogowanych */}
+        {/*
+         * Przycisk submit — sticky na dole modala, poza scrollowaną zawartością.
+         * `type="submit" form="dodaj-post-form"` — submit formularza z zewnątrz diva
+         * (form jest w scrollowanym divie, button w osobnym divie sticky na dole).
+         * `pb-6 sm:pb-4` — extra padding na mobile (env safe-area-inset-bottom).
+         * `disabled={loading || !typRyby}` — zablokowany jeśli brak gatunku lub upload w toku.
+         */}
         {user && (
           <div
             className="px-5 pt-4 pb-6 sm:pb-4 border-t border-gray-100 bg-white flex-shrink-0"
           >
             <button
               type="submit"
-              form="dodaj-post-form"
-              disabled={loading || !typRyby}
+              form="dodaj-post-form"  // target: formularz po id (nie bezpośredni rodzic)
+              disabled={loading || !typRyby} // wymagany gatunek ryby
               className="w-full bg-blue-600 text-white py-4 rounded-xl font-semibold text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all shadow-sm"
             >
               {loading ? (

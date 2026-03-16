@@ -1,0 +1,54 @@
+import { Meta } from '@storybook/blocks';
+
+<Meta title="Fishnet / Wprowadzenie" />
+
+# 🎣 Fishnet — Dokumentacja Komponentów
+
+Witaj w Storybooku aplikacji **Fishnet**.
+
+## O aplikacji
+
+Fishnet to społecznościowa aplikacja PWA dla wędkarzy:
+- **Mapa łowisk** — interaktywna mapa z poligonami GeoJSON (Leaflet)
+- **Feed połowów** — posty ze zdjęciami ryb, infinite scroll, polubienia
+- **Profile użytkowników** — obserwowanie, historia połowów
+- **Panel admina** — moderacja, zarządzanie łowiskami i propozycjami
+
+## Stack techniczny
+
+| Warstwa | Technologia |
+|---|---|
+| Framework | Next.js 16 (App Router) |
+| Stylowanie | Tailwind CSS v4 |
+| Baza danych | Firebase Firestore |
+| Auth | Firebase Auth (Google OAuth) |
+| Mapa | Leaflet + react-leaflet |
+
+## Struktura komponentów
+
+### `Feed/`
+Komponenty feedu połowów:
+- **PostCard** — karta pojedynczego połowu (zdjęcia, gatunek, waga, polubienia)
+- **SkeletonCard** — placeholder ładowania
+
+### `Strony/`
+Podgląd układu stron:
+- **LandingPage** — strona główna z CTA
+
+## Ograniczenia Storybooka
+
+Komponenty korzystające z Firebase (PostCard, AdminPanel, MapView) działają
+w Storybooku tylko w trybie **prezentacyjnym** — operacje na Firestore
+(like, delete, fetch) nie są wykonywane. Dane są mockowane przez props.
+
+Komponenty z Leaflet (`MapView`) wymagają `ssr: false` — nie da się ich
+łatwo pokazać w Storybooku bez dodatkowego setupu. Dokumentacja w kodzie
+(JSDoc) jest ważniejsza dla tych komponentów.
+
+## Jak uruchomić Storybook
+
+```bash
+npm run storybook
+```
+
+Storybook działa na **http://localhost:6006**

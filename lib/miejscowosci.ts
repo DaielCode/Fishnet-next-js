@@ -1,4 +1,18 @@
-// Największe polskie miasta — natychmiastowe podpowiedzi (bez API)
+/**
+ * POLSKIE_MIASTA — statyczna lista największych polskich miast z współrzędnymi.
+ *
+ * Używana w OsmLowiskoPicker jako źródło natychmiastowych podpowiedzi autocomplete
+ * zanim Photon API (zewnętrzne) zdąży odpowiedzieć (debounce 200ms).
+ *
+ * Pola:
+ * - `n`   — nazwa miasta
+ * - `lat` — szerokość geograficzna (WGS84)
+ * - `lng` — długość geograficzna (WGS84)
+ * - `p`   — priorytet sortowania (wyższy = ważniejszy, wyświetla się wyżej na liście)
+ *
+ * Priorytet odpowiada w przybliżeniu liczbie mieszkańców (Warszawa=100, Kraków=95...).
+ * Podpowiedzi z tego pliku wygrywają z Photon API w sortowaniu końcowym.
+ */
 // p = priorytet (wyższy = ważniejszy)
 export const POLSKIE_MIASTA: { n: string; lat: number; lng: number; p: number }[] = [
   { n: "Warszawa",            lat: 52.2297, lng: 21.0122, p: 100 },

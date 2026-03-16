@@ -1,5 +1,20 @@
 "use client";
 
+/**
+ * Navbar — nawigacja aplikacji.
+ *
+ * Zawiera dwie warstwy nawigacji:
+ * 1. **Top bar** (desktop + mobile) — logo, linki do sekcji, przełącznik języka,
+ *    avatar użytkownika, przycisk logowania/wylogowania
+ * 2. **Bottom tab bar** (tylko mobile, `sm:hidden`) — zakładki z ikonami outline/filled
+ *    zmieniającymi się w zależności od aktywnej ścieżki
+ *
+ * Obsługuje:
+ * - Warunkowe renderowanie zakładki "Admin" (tylko gdy `isAdmin === true`)
+ * - Przełącznik języka (PL/EN/UA) z dropdown pozycjonowanym relative do przycisku
+ * - Otwieranie modalu "Dodaj post" bezpośrednio z navbaru
+ * - Ikony SVG inline (brak zewnętrznych zależności od biblioteki ikon)
+ */
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";

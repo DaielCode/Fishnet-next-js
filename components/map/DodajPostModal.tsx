@@ -1,11 +1,36 @@
 "use client";
 
+/**
+ * DodajPostModal — uproszczony modal dodawania posta, używany na stronie /mapa.
+ *
+ * UWAGA: To jest STARSZA wersja modala. Główny modal to `DodajPostFeedModal`.
+ * Różnice:
+ * - Brak swipe-to-close, brak LocationPreview, brak drag-and-drop
+ * - Upload do Cloudinary zamiast Firebase Storage (legacy)
+ * - Brak obsługi lat/lng (nie zapisuje pinów na mapie)
+ * - Skrócona lista gatunków ryb (10 vs 35 w DodajPostFeedModal)
+ * - Brak i18n (hardcoded po polsku)
+ *
+ * Komponent może być zastąpiony przez DodajPostFeedModal w przyszłości.
+ */
 import { useState, useRef } from "react";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db, auth } from "@/lib/firebase";
 
+/** Skrócona lista gatunków — starsza wersja bez pełnej listy z translations.ts */
 const TYPY_RYB = ["Karp", "Szczupak", "Okoń", "Lin", "Amur", "Sum", "Płoć", "Leszcz", "Sandacz", "Inne"];
 
+/**
+ * Uploaduje plik do Cloudinary przez REST API.
+ *
+ * LEGACY: Nowy kod używa Firebase Storage (uploadToStorage w DodajPostFeedModal).
+ * Cloudinary wymaga konfiguracji:
+ * - `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME` — nazwa konta Cloudinary
+ * - `NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET` — unsigned upload preset (bez podpisu)
+ *
+ * `upload_preset` pozwala na upload bez sygnatury (mniej bezpieczne, ale prostsze dla MVP).
+ * `secure_url` — zawsze HTTPS, niezależnie od konfiguracji Cloudinary.
+ */
 async function uploadToCloudinary(plik: File): Promise<string> {
   const formData = new FormData();
   formData.append("file", plik);
@@ -16,7 +41,7 @@ async function uploadToCloudinary(plik: File): Promise<string> {
   );
   if (!res.ok) throw new Error("Błąd uploadu zdjęcia");
   const data = await res.json();
-  return data.secure_url as string;
+  return data.secure_url as string; // publiczny HTTPS URL do zdjęcia
 }
 
 interface Props {
@@ -37,17 +62,23 @@ export default function DodajPostModal({ lokalizacja, onClose }: Props) {
   const [dlugoscCm, setDlugoscCm] = useState("");
   const [zdjecia, setZdjecia] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null); // ukryty <input type="file">
 
+  /**
+   * Submit: upload zdjęć do Cloudinary (sekwencyjnie) → addDoc do Firestore.
+   * Guard `if (!auth.currentUser) return` — Firestore i tak odrzuci (reguły bezpieczeństwa),
+   * ale early return zapobiega błędom TypeScript przy dostępie do .uid.
+   * `serverTimestamp()` — timestamp po stronie serwera (niezależny od zegara klienta).
+   */
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!auth.currentUser) return;
+    if (!auth.currentUser) return; // teoretycznie niemożliwe — modal nie pokazuje się dla niezalogowanych
     setLoading(true);
 
     try {
       const zdjeciaUrls: string[] = [];
       for (const plik of zdjecia) {
-        const url = await uploadToCloudinary(plik);
+        const url = await uploadToCloudinary(plik); // upload sekwencyjnie (nie Promise.all)
         zdjeciaUrls.push(url);
       }
 
@@ -60,18 +91,19 @@ export default function DodajPostModal({ lokalizacja, onClose }: Props) {
         nazwa_ryby: nazwaRyby,
         zdjecia: zdjeciaUrls,
         opis,
-        waga_kg: wagaKg ? parseFloat(wagaKg) : null,
+        waga_kg: wagaKg ? parseFloat(wagaKg) : null,    // null = nie podano
         dlugosc_cm: dlugoscCm ? parseFloat(dlugoscCm) : null,
         timestamp: serverTimestamp(),
         likes: 0,
       });
 
-      onClose();
+      onClose(); // zamknij modal po sukcesie
     } finally {
-      setLoading(false);
+      setLoading(false); // zawsze odblokuj przycisk (nawet przy błędzie)
     }
   }
 
+  // Nagłówek: "Stanowisko 3 · Uroczysko Karpiowe" lub tylko "Uroczysko Karpiowe"
   const naglowekLokalizacji = lokalizacja.numer
     ? `Stanowisko ${lokalizacja.numer} · ${lokalizacja.nazwa}`
     : lokalizacja.nazwa;

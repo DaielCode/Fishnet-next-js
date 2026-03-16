@@ -1,5 +1,18 @@
 "use client";
 
+/**
+ * Kontekst i18n — zarządza aktywnym językiem aplikacji.
+ *
+ * Obsługiwane języki: `"pl"` (Polski), `"en"` (English), `"uk"` (Українська).
+ * Wybrany język jest zapisywany w localStorage pod kluczem `fishnet_lang`.
+ *
+ * Użycie:
+ * ```tsx
+ * // Dostęp do tłumaczeń w dowolnym komponencie:
+ * const { t, lang, setLang } = useLanguage();
+ * return <h1>{t.feed.title}</h1>;
+ * ```
+ */
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { translations, type Lang, type Translations } from "@/lib/i18n/translations";
 

@@ -1,5 +1,20 @@
 "use client";
 
+/**
+ * ProfilPage — strona profilu zalogowanego użytkownika (/profil).
+ *
+ * Stany renderowania:
+ * 1. `loading === true`  → spinner z tekstem (Auth jeszcze się inicjalizuje)
+ * 2. `user === null`     → prompt do zalogowania przez Google
+ * 3. `user !== null`     → profil: avatar, nazwa, email + linki do sekcji
+ *
+ * Avatar pochodzi z Google (photoURL) — wyświetlany przez next/image z
+ * `remotePatterns` w next.config.ts dla `lh3.googleusercontent.com`.
+ * Fallback: kolorowe kółko z pierwszą literą displayName.
+ *
+ * Przycisk wylogowania jest widoczny tylko na mobile (`sm:hidden`),
+ * bo na desktopie wylogowanie jest w Navbar.
+ */
 import { useAuth } from "@/hooks/useAuth";
 import { useLanguage } from "@/context/LanguageContext";
 import Image from "next/image";

@@ -1,5 +1,21 @@
 "use client";
 
+/**
+ * AdminPanel — panel zarządzania aplikacją (dostęp tylko dla adminów).
+ *
+ * Dostępne zakładki:
+ * - **Użytkownicy** — lista kont, nadawanie/odbieranie uprawnień admina
+ * - **Łowiska** — dodawanie, edycja i usuwanie łowisk z mapy
+ * - **Posty** — przegląd i moderacja wszystkich postów
+ * - **Propozycje** — akceptowanie/odrzucanie propozycji łowisk od użytkowników
+ *   (badge z liczbą oczekujących przez `onSnapshot`)
+ *
+ * Komponent sprawdza `isAdmin` przez `useAuth` — niezalogowani i nieadmini
+ * widzą komunikat błędu zamiast panelu.
+ *
+ * Admin jest identyfikowany przez pole `isAdmin: true` w `users/{uid}` Firestore.
+ * Nadawanie uprawnień: Firebase Console → Firestore → users/{uid} → isAdmin: true
+ */
 import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useAuth } from "@/hooks/useAuth";
@@ -31,14 +47,23 @@ type Tab = "uzytkownicy" | "lowiska" | "posty" | "propozycje";
 export default function AdminPanel() {
   const { user, isAdmin, loading } = useAuth();
   const [tab, setTab] = useState<Tab>("uzytkownicy");
+
+  /**
+   * pendingCount — liczba oczekujących propozycji łowisk (badge na zakładce).
+   * onSnapshot — realtime: gdy nowa propozycja trafi do Firestore, badge
+   * aktualizuje się automatycznie bez odświeżania strony.
+   * Guard `if (!isAdmin)` — nie subskrybujemy dla niezalogowanych/nieadminów
+   * (Firestore reguły i tak odrzucą zapytanie, ale unikamy błędów w konsoli).
+   */
   const [pendingCount, setPendingCount] = useState(0);
 
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!isAdmin) return; // tylko admin ma dostęp do tej kolekcji
     const unsub = onSnapshot(collection(db, "lowiska_propozycje"), (snap) => {
+      // Liczymy tylko oczekujące — nie zaakceptowane ani odrzucone
       setPendingCount(snap.docs.filter((d) => d.data().status === "oczekuje").length);
     });
-    return unsub;
+    return unsub; // cleanup: odsubskrybuj przy odmontowaniu
   }, [isAdmin]);
 
   if (loading) {
@@ -112,28 +137,41 @@ export default function AdminPanel() {
 
 // ─── Tab: Użytkownicy ────────────────────────────────────────────────────────
 
+/**
+ * UzytkownicyTab — lista wszystkich kont z możliwością nadawania/odbierania uprawnień admina.
+ *
+ * Wyszukiwanie działa po nicku LUB UID (przydatne gdy nick jest pusty/nieznany).
+ * `saving` przechowuje UID użytkownika w trakcie zapisu — blokuje konkretny przycisk.
+ */
 function UzytkownicyTab() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [saving, setSaving] = useState<string | null>(null);
+  const [saving, setSaving] = useState<string | null>(null); // UID aktualnie zapisywanego użytkownika
 
   useEffect(() => {
+    // Jednorazowe załadowanie wszystkich użytkowników — nie potrzebujemy realtime
     getDocs(collection(db, "users")).then((snap) => {
       setUsers(snap.docs.map((d) => ({ uid: d.id, ...d.data() } as AdminUser)));
       setLoading(false);
     });
   }, []);
 
+  /**
+   * Przełącza uprawnienia admina dla danego użytkownika.
+   * Optymistyczna aktualizacja UI: zmieniamy stan lokalnie natychmiast,
+   * nie czekamy na potwierdzenie z Firestore (Firestore jest deterministyczne).
+   */
   async function toggleAdmin(uid: string, current: boolean) {
-    setSaving(uid);
+    setSaving(uid); // zablokuj przycisk tego użytkownika
     await updateDoc(doc(db, "users", uid), { isAdmin: !current });
     setUsers((prev) =>
-      prev.map((u) => (u.uid === uid ? { ...u, isAdmin: !current } : u))
+      prev.map((u) => (u.uid === uid ? { ...u, isAdmin: !current } : u)) // optymistyczny update
     );
     setSaving(null);
   }
 
+  // Filtrowanie po nicku lub UID — przydatne gdy szukamy konkretnego konta
   const filtered = users.filter(
     (u) =>
       u.nick?.toLowerCase().includes(search.toLowerCase()) ||
@@ -193,16 +231,28 @@ function UzytkownicyTab() {
 
 // ─── Tab: Łowiska ────────────────────────────────────────────────────────────
 
+/**
+ * LowiskaTab — zarządzanie łowiskami w Firestore (`lowiska` kolekcja).
+ *
+ * Trzyetapowy wizard (identyczny jak w ZaproponujLowiskoModal):
+ * - `"idle"` — wybór metody (OSM picker lub ręcznie)
+ * - `"picking"` — OsmLowiskoPicker (mapa + wyszukiwanie w Overpass API)
+ * - `"form"` — formularz z danymi łowiska + submit do Firestore
+ *
+ * Uwaga: usunięcie łowiska z Firestore NIE usuwa jego subkolekcji stanowisk
+ * (Firestore nie kaskaduje delete). Stanowiska pozostają "osierocone".
+ */
 type OsmStep = "idle" | "picking" | "form";
 
 function LowiskaTab() {
   const [lowiska, setLowiska] = useState<Lowisko[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null); // ID aktualnie usuwanego łowiska
+
   const [error, setError] = useState("");
 
-  // Pola formularza
+  // Pola formularza — wypełniane ręcznie lub przez OsmLowiskoPicker (handleOsmConfirm)
   const [nazwa, setNazwa] = useState("");
   const [opis, setOpis] = useState("");
   const [lat, setLat] = useState("");
@@ -210,9 +260,9 @@ function LowiskaTab() {
   const [kolor, setKolor] = useState("#1d4ed8");
   const [geojsonFile, setGeojsonFile] = useState<File | null>(null);
 
-  // Flow OSM
+  // Stan kroku wizarda + GeoJSON z OSM Picker
   const [osmStep, setOsmStep] = useState<OsmStep>("idle");
-  const [osmGeojson, setOsmGeojson] = useState<GeoJSON.FeatureCollection | null>(null);
+  const [osmGeojson, setOsmGeojson] = useState<GeoJSON.FeatureCollection | null>(null); // null gdy tryb ręczny
 
   useEffect(() => {
     getDocs(collection(db, "lowiska")).then((snap) => {
@@ -284,11 +334,16 @@ function LowiskaTab() {
     setSaving(false);
   }
 
+  /**
+   * Usuwa łowisko z Firestore i aktualizuje lokalny stan.
+   * UWAGA: nie usuwa subkolekcji `stanowiska` — pozostają osierocone w Firestore.
+   * Ewentualny cleanup należy wykonać manualnie przez Firebase Console.
+   */
   async function handleDelete(id: string) {
     if (!window.confirm("Usunąć to łowisko? Tej operacji nie można cofnąć.")) return;
-    setDeleting(id);
+    setDeleting(id); // zablokuj przycisk usuń dla tego łowiska
     await deleteDoc(doc(db, "lowiska", id));
-    setLowiska((prev) => prev.filter((l) => l.id !== id));
+    setLowiska((prev) => prev.filter((l) => l.id !== id)); // usuń z lokalnego stanu
     setDeleting(null);
   }
 
@@ -493,12 +548,19 @@ function LowiskaTab() {
 
 // ─── Tab: Posty ──────────────────────────────────────────────────────────────
 
+/**
+ * PostyTab — moderacja postów.
+ * Jednorazowy getDocs zamiast onSnapshot — lista postów nie musi być realtime w adminie.
+ * Admin może usunąć post (np. spam / naruszenie zasad).
+ * UWAGA: usunięcie posta NIE usuwa zdjęć z Firebase Storage — trzeba je usunąć ręcznie.
+ */
 function PostyTab() {
   const [posty, setPosty] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null); // ID aktualnie usuwanego posta
 
   useEffect(() => {
+    // Sortowanie od najnowszych — admin widzi najnowsze posty na górze
     const q = query(collection(db, "posty"), orderBy("timestamp", "desc"));
     getDocs(q).then((snap) => {
       setPosty(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Post)));
@@ -506,12 +568,16 @@ function PostyTab() {
     });
   }, []);
 
+  /**
+   * Usuwa post z Firestore.
+   * UWAGA: zdjęcia w Firebase Storage pozostają — Storage rules nie auto-cleanupują.
+   */
   async function handleDelete(post: Post) {
     if (!window.confirm("Usunąć ten post?")) return;
     setDeleting(post.id);
     try {
       await deleteDoc(doc(db, "posty", post.id));
-      setPosty((prev) => prev.filter((p) => p.id !== post.id));
+      setPosty((prev) => prev.filter((p) => p.id !== post.id)); // usuń z lokalnego stanu
     } catch (err) {
       console.error(err);
     }
@@ -582,6 +648,25 @@ function PostyTab() {
 
 // ─── Mini podgląd mapy ───────────────────────────────────────────────────────
 
+/**
+ * MiniMapPreview — statyczna miniatura mapy Leaflet dla propozycji łowiska.
+ *
+ * Używa bezpośredniego API Leaflet (nie react-leaflet) bo:
+ * - Ten komponent jest renderowany wielokrotnie w liście (jedna instancja na propozycję)
+ * - Lepsze zarządzanie cyklem życia przez imperatywne .remove()
+ *
+ * `cancelled` flag — zapobiega race condition gdy komponent odmontuje się
+ * ZANIM dynamiczny import("leaflet") się zakończy. Bez flagi:
+ * import() kończy się → próba stworzenia mapy na już odmontowanym divie → błąd.
+ *
+ * `map.invalidateSize()` po 50ms — Leaflet potrzebuje żeby kontener miał wymiary.
+ * Bez timeout: div może mieć height:0 gdy Leaflet liczy rozmiar → pusta mapa.
+ *
+ * GeoJSON: jeśli podano `geojsonData` → rysuj poligon + fitBounds (automatyczny zoom).
+ * Fallback: circleMarker na współrzędnych gdy brak GeoJSON lub błąd parsowania.
+ *
+ * Wszystkie interakcje mapy wyłączone (dragging, scroll, zoom) — to tylko podgląd.
+ */
 function MiniMapPreview({ lat, lng, geojsonData, kolor }: {
   lat: number;
   lng: number;
@@ -589,15 +674,16 @@ function MiniMapPreview({ lat, lng, geojsonData, kolor }: {
   kolor?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<any>(null);
+  const mapRef = useRef<any>(null); // przechowuje instancję L.Map dla cleanup
 
   useEffect(() => {
     if (!containerRef.current) return;
-    let cancelled = false;
+    let cancelled = false; // flaga race condition — import() może zakończyć się po odmontowaniu
 
     import("leaflet").then((L) => {
-      if (cancelled || !containerRef.current) return;
+      if (cancelled || !containerRef.current) return; // komponent już odmontowany
 
+      // Usuń poprzednią mapę jeśli props się zmieniły (re-render z nowymi koordynatami)
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
@@ -607,7 +693,8 @@ function MiniMapPreview({ lat, lng, geojsonData, kolor }: {
         center: [lat, lng],
         zoom: 13,
         zoomControl: false,
-        attributionControl: false,
+        attributionControl: false, // brak "© OpenStreetMap" — oszczędność miejsca w mini podglądzie
+        // Wszystkie interakcje wyłączone — tylko statyczny podgląd
         dragging: false,
         scrollWheelZoom: false,
         doubleClickZoom: false,
@@ -620,6 +707,7 @@ function MiniMapPreview({ lat, lng, geojsonData, kolor }: {
         maxZoom: 19,
       }).addTo(map);
 
+      // invalidateSize() po 50ms — div musi mieć wymiary zanim Leaflet obliczy rozmiar
       setTimeout(() => { if (!cancelled) map.invalidateSize(); }, 50);
 
       if (geojsonData) {
@@ -633,8 +721,10 @@ function MiniMapPreview({ lat, lng, geojsonData, kolor }: {
               fillColor: kolor ?? "#1d4ed8",
             },
           }).addTo(map);
+          // fitBounds: automatycznie ustaw zoom żeby cały poligon był widoczny
           map.fitBounds(layer.getBounds(), { padding: [12, 12] });
         } catch {
+          // Uszkodzony GeoJSON — fallback do punktowego markera
           L.circleMarker([lat, lng], {
             radius: 10,
             color: kolor ?? "#1d4ed8",
@@ -644,6 +734,7 @@ function MiniMapPreview({ lat, lng, geojsonData, kolor }: {
           }).addTo(map);
         }
       } else {
+        // Brak GeoJSON — tylko punkt na współrzędnych
         L.circleMarker([lat, lng], {
           radius: 10,
           color: kolor ?? "#1d4ed8",
@@ -655,13 +746,13 @@ function MiniMapPreview({ lat, lng, geojsonData, kolor }: {
     });
 
     return () => {
-      cancelled = true;
+      cancelled = true; // zablokuj pending import()
       if (mapRef.current) {
-        mapRef.current.remove();
+        mapRef.current.remove(); // zniszcz instancję Leaflet — zwalnia DOM i event listenery
         mapRef.current = null;
       }
     };
-  }, [lat, lng, geojsonData, kolor]);
+  }, [lat, lng, geojsonData, kolor]); // odbuduj mapę gdy zmienią się dane
 
   return (
     <div
@@ -673,41 +764,64 @@ function MiniMapPreview({ lat, lng, geojsonData, kolor }: {
 
 // ─── Tab: Propozycje łowisk ───────────────────────────────────────────────────
 
+/**
+ * PropozycjeTab — przegląd i moderacja propozycji łowisk od użytkowników.
+ *
+ * onSnapshot — realtime: gdy użytkownik doda propozycję, pojawia się od razu w panelu.
+ * Pokazujemy tylko status "oczekuje" (nie zaakceptowane ani odrzucone).
+ * Sortowanie od najnowszych — `toMillis()` daje porównywalny timestamp w ms.
+ *
+ * `processing` — ID propozycji w trakcie przetwarzania (blokuje oba przyciski).
+ */
 function PropozycjeTab() {
   const [propozycje, setPropozycje] = useState<LowiskoPropozycja[]>([]);
   const [loading, setLoading] = useState(true);
-  const [processing, setProcessing] = useState<string | null>(null);
+  const [processing, setProcessing] = useState<string | null>(null); // ID aktualnie przetwarzanej propozycji
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "lowiska_propozycje"), (snap) => {
       const data = snap.docs
         .map((d) => ({ id: d.id, ...d.data() } as LowiskoPropozycja))
-        .filter((p) => p.status === "oczekuje")
-        .sort((a, b) => b.timestamp?.toMillis?.() - a.timestamp?.toMillis?.());
+        .filter((p) => p.status === "oczekuje") // tylko nierozpatrzone
+        .sort((a, b) => b.timestamp?.toMillis?.() - a.timestamp?.toMillis?.()); // najnowsze pierwsze
       setPropozycje(data);
       setLoading(false);
     });
-    return unsub;
+    return unsub; // cleanup: odsubskrybuj przy odmontowaniu
   }, []);
 
+  /**
+   * Akceptuje propozycję:
+   * 1. Tworzy nowy dokument w `lowiska` (propozycja staje się oficjalnym łowiskiem)
+   * 2. Aktualizuje status w `lowiska_propozycje` na "zaakceptowane"
+   * Dwa osobne writeye — nie ma transakcji (atomowości) w tym miejscu.
+   * Ryzyko: jeśli krok 2 się nie powiedzie, łowisko jest dodane ale propozycja wciąż "oczekuje".
+   */
   async function handleAccept(p: LowiskoPropozycja) {
     setProcessing(p.id);
     try {
       const docData: Record<string, unknown> = {
         nazwa: p.nazwa,
         opis: p.opis,
-        lokalizacja: p.lokalizacja,
+        lokalizacja: p.lokalizacja, // GeoPoint — kopiowany z propozycji
         kolor: p.kolor,
       };
+      // Kopiuj GeoJSON jeśli podano — string (Firestore nie obsługuje zagnieżdżonych tablic)
       if (p.geojson_data) docData.geojson_data = p.geojson_data;
-      await addDoc(collection(db, "lowiska"), docData);
-      await updateDoc(doc(db, "lowiska_propozycje", p.id), { status: "zaakceptowane" });
+      await addDoc(collection(db, "lowiska"), docData);   // dodaj jako oficjalne łowisko
+      await updateDoc(doc(db, "lowiska_propozycje", p.id), { status: "zaakceptowane" }); // zmień status
+      // onSnapshot automatycznie usunie propozycję z listy (filter status === "oczekuje")
     } catch (err) {
       console.error(err);
     }
     setProcessing(null);
   }
 
+  /**
+   * Odrzuca propozycję — zmienia status na "odrzucone".
+   * Propozycja pozostaje w Firestore (nie jest usuwana) — do celów audytu.
+   * onSnapshot automatycznie usuwa ją z widoku (filter status === "oczekuje").
+   */
   async function handleReject(id: string) {
     setProcessing(id);
     try {
