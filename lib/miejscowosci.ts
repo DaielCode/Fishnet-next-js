@@ -1,0 +1,79 @@
+/**
+ * POLSKIE_MIASTA — statyczna lista największych polskich miast z współrzędnymi.
+ *
+ * Używana w OsmLowiskoPicker jako źródło natychmiastowych podpowiedzi autocomplete
+ * zanim Photon API (zewnętrzne) zdąży odpowiedzieć (debounce 200ms).
+ *
+ * Pola:
+ * - `n`   — nazwa miasta
+ * - `lat` — szerokość geograficzna (WGS84)
+ * - `lng` — długość geograficzna (WGS84)
+ * - `p`   — priorytet sortowania (wyższy = ważniejszy, wyświetla się wyżej na liście)
+ *
+ * Priorytet odpowiada w przybliżeniu liczbie mieszkańców (Warszawa=100, Kraków=95...).
+ * Podpowiedzi z tego pliku wygrywają z Photon API w sortowaniu końcowym.
+ */
+// p = priorytet (wyższy = ważniejszy)
+export const POLSKIE_MIASTA: { n: string; lat: number; lng: number; p: number }[] = [
+  { n: "Warszawa",            lat: 52.2297, lng: 21.0122, p: 100 },
+  { n: "Kraków",              lat: 50.0647, lng: 19.9450, p: 95  },
+  { n: "Łódź",                lat: 51.7592, lng: 19.4560, p: 90  },
+  { n: "Wrocław",             lat: 51.1079, lng: 17.0385, p: 90  },
+  { n: "Poznań",              lat: 52.4064, lng: 16.9252, p: 88  },
+  { n: "Gdańsk",              lat: 54.3520, lng: 18.6466, p: 87  },
+  { n: "Szczecin",            lat: 53.4285, lng: 14.5528, p: 85  },
+  { n: "Bydgoszcz",           lat: 53.1235, lng: 18.0084, p: 83  },
+  { n: "Lublin",              lat: 51.2465, lng: 22.5684, p: 82  },
+  { n: "Katowice",            lat: 50.2649, lng: 19.0238, p: 81  },
+  { n: "Białystok",           lat: 53.1325, lng: 23.1688, p: 80  },
+  { n: "Gdynia",              lat: 54.5189, lng: 18.5305, p: 79  },
+  { n: "Częstochowa",         lat: 50.8118, lng: 19.1203, p: 78  },
+  { n: "Radom",               lat: 51.4027, lng: 21.1471, p: 75  },
+  { n: "Sosnowiec",           lat: 50.2863, lng: 19.1043, p: 74  },
+  { n: "Toruń",               lat: 53.0138, lng: 18.5981, p: 74  },
+  { n: "Kielce",              lat: 50.8661, lng: 20.6286, p: 73  },
+  { n: "Rzeszów",             lat: 50.0412, lng: 22.0042, p: 73  },
+  { n: "Gliwice",             lat: 50.2945, lng: 18.6714, p: 72  },
+  { n: "Zabrze",              lat: 50.3249, lng: 18.7857, p: 70  },
+  { n: "Olsztyn",             lat: 53.7784, lng: 20.4801, p: 70  },
+  { n: "Bielsko-Biała",       lat: 49.8224, lng: 19.0444, p: 69  },
+  { n: "Bytom",               lat: 50.3480, lng: 18.9153, p: 68  },
+  { n: "Zielona Góra",        lat: 51.9356, lng: 15.5062, p: 68  },
+  { n: "Rybnik",              lat: 50.0971, lng: 18.5460, p: 67  },
+  { n: "Opole",               lat: 50.6751, lng: 17.9213, p: 67  },
+  { n: "Tychy",               lat: 50.1319, lng: 18.9978, p: 66  },
+  { n: "Dąbrowa Górnicza",    lat: 50.3221, lng: 19.1881, p: 65  },
+  { n: "Płock",               lat: 52.5464, lng: 19.6986, p: 65  },
+  { n: "Elbląg",              lat: 54.1558, lng: 19.4048, p: 64  },
+  { n: "Wałbrzych",           lat: 50.7706, lng: 16.2842, p: 63  },
+  { n: "Włocławek",           lat: 52.6483, lng: 19.0677, p: 63  },
+  { n: "Tarnów",              lat: 50.0121, lng: 20.9858, p: 62  },
+  { n: "Chorzów",             lat: 50.2965, lng: 18.9548, p: 62  },
+  { n: "Koszalin",            lat: 54.1944, lng: 16.1717, p: 61  },
+  { n: "Kalisz",              lat: 51.7614, lng: 18.0910, p: 61  },
+  { n: "Legnica",             lat: 51.2070, lng: 16.1551, p: 60  },
+  { n: "Grudziądz",           lat: 53.4836, lng: 18.7534, p: 59  },
+  { n: "Jaworzno",            lat: 50.2026, lng: 19.2746, p: 58  },
+  { n: "Słupsk",              lat: 54.4641, lng: 17.0285, p: 57  },
+  { n: "Nowy Sącz",           lat: 49.6244, lng: 20.6976, p: 56  },
+  { n: "Jelenia Góra",        lat: 50.9044, lng: 15.7197, p: 56  },
+  { n: "Siedlce",             lat: 52.1677, lng: 22.2903, p: 55  },
+  { n: "Konin",               lat: 52.2230, lng: 18.2512, p: 55  },
+  { n: "Piła",                lat: 53.1513, lng: 16.7383, p: 54  },
+  { n: "Piotrków Trybunalski",lat: 51.4047, lng: 19.7028, p: 54  },
+  { n: "Lubin",               lat: 51.3997, lng: 16.2012, p: 53  },
+  { n: "Ostrowiec Świętokrzyski", lat: 50.9288, lng: 21.3856, p: 52 },
+  { n: "Inowrocław",          lat: 52.7976, lng: 18.2596, p: 52  },
+  { n: "Suwałki",             lat: 54.1116, lng: 22.9310, p: 51  },
+  { n: "Gniezno",             lat: 52.5354, lng: 17.5952, p: 50  },
+  { n: "Ostróda",             lat: 53.6975, lng: 19.9597, p: 45  },
+  { n: "Cieszyn",             lat: 49.7497, lng: 18.6340, p: 44  },
+  { n: "Zakopane",            lat: 49.2992, lng: 19.9496, p: 44  },
+  { n: "Mielec",              lat: 50.2880, lng: 21.4270, p: 43  },
+  { n: "Świdnica",            lat: 50.8433, lng: 16.4877, p: 43  },
+  { n: "Przemyśl",            lat: 49.7839, lng: 22.7677, p: 43  },
+  { n: "Zamość",              lat: 50.7230, lng: 23.2520, p: 42  },
+  { n: "Ostrów Wielkopolski", lat: 51.6512, lng: 17.8079, p: 42  },
+  { n: "Tczew",               lat: 54.0921, lng: 18.7780, p: 41  },
+  { n: "Leszno",              lat: 51.8403, lng: 16.5752, p: 41  },
+];

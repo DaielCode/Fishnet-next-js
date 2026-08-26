@@ -1,3 +1,30 @@
+/**
+ * translations.ts — słowniki tłumaczeń dla całej aplikacji (i18n).
+ *
+ * Obsługiwane języki:
+ * - `"pl"` — Polski (domyślny)
+ * - `"en"` — English
+ * - `"uk"` — Українська
+ *
+ * Struktura słownika jest podzielona na sekcje tematyczne:
+ * - `nav`     — nawigacja (Navbar)
+ * - `feed`    — feed połowów
+ * - `post`    — formularz dodawania posta
+ * - `map`     — popupy na mapie
+ * - `home`    — landing page
+ * - `profile` — strona profilu
+ * - `fish`    — słownik nazw gatunków ryb (klucz = polska nazwa, wartość = przetłumaczona)
+ *
+ * Typ `Translations` jest automatycznie inferowany z wersji polskiej (`translations.pl`)
+ * dzięki `satisfies Record<Lang, unknown>` — TypeScript sprawdzi że każdy język
+ * ma identyczną strukturę kluczy jak `pl`.
+ *
+ * Użycie w komponencie:
+ * ```tsx
+ * const { t } = useLanguage();
+ * // t.feed.title, t.post.publish, t.fish["Karp"]
+ * ```
+ */
 export type Lang = "pl" | "en" | "uk";
 
 export const translations = {
@@ -6,6 +33,7 @@ export const translations = {
       map: "Mapa",
       feed: "Feed",
       profile: "Profil",
+      admin: "Admin",
       login: "Zaloguj",
       logout: "Wyloguj",
       addPost: "+",
@@ -103,6 +131,7 @@ export const translations = {
       map: "Map",
       feed: "Feed",
       profile: "Profile",
+      admin: "Admin",
       login: "Login",
       logout: "Logout",
       addPost: "+",
@@ -200,6 +229,7 @@ export const translations = {
       map: "Карта",
       feed: "Стрічка",
       profile: "Профіль",
+      admin: "Адмін",
       login: "Увійти",
       logout: "Вийти",
       addPost: "+",

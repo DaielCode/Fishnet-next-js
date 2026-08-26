@@ -1,5 +1,15 @@
 "use client";
 
+/**
+ * Strona główna (/) — landing page aplikacji Fishnet.
+ *
+ * Wyświetla logo, tagline (z i18n) i dwa przyciski CTA:
+ * - "Otwórz Mapę"  → /mapa
+ * - "Zobacz Feed"  → /feed
+ *
+ * Niezalogowani użytkownicy lądują tutaj z `/`. Zalogowani
+ * mogą od razu kliknąć do sekcji aplikacji.
+ */
 import Link from "next/link";
 import { useLanguage } from "@/context/LanguageContext";
 

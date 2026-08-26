@@ -2,34 +2,51 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    function isAdmin() {
+      return request.auth != null &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+
     // Łowiska: każdy czyta, tylko admin pisze
     match /lowiska/{id} {
       allow read: if true;
-      allow write: if request.auth != null && request.auth.token.admin == true;
+      allow write: if isAdmin();
 
       match /stanowiska/{stanowiskoId} {
         allow read: if true;
-        allow write: if request.auth != null && request.auth.token.admin == true;
+        allow write: if isAdmin();
       }
     }
 
-    // Posty: każdy czyta, zalogowany tworzy, tylko autor edytuje/usuwa
+    // Posty: każdy czyta, zalogowany tworzy, tylko autor edytuje, autor lub admin usuwa
     match /posty/{postId} {
       allow read: if true;
       allow create: if request.auth != null;
-      allow update, delete: if request.auth != null && request.auth.uid == resource.data.user_id;
+      allow update: if request.auth != null && (
+        request.auth.uid == resource.data.user_id ||
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'likedBy'])
+      );
+      allow delete: if request.auth != null &&
+                       (request.auth.uid == resource.data.user_id || isAdmin());
     }
 
-    // Użytkownicy: każdy czyta, tylko właściciel edytuje
+    // Użytkownicy: każdy czyta, właściciel edytuje swój profil, admin może ustawiać isAdmin
     match /users/{userId} {
       allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null &&
+                      (request.auth.uid == userId || isAdmin());
     }
 
     // Followers
     match /followers/{docId} {
       allow read: if true;
       allow write: if request.auth != null;
+    }
+
+    // Propozycje łowisk: zalogowany tworzy swoje, admin czyta wszystkie i edytuje status
+    match /lowiska_propozycje/{id} {
+      allow create: if request.auth != null;
+      allow read, update, delete: if isAdmin();
     }
   }
 }

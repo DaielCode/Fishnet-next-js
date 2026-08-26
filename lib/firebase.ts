@@ -1,3 +1,16 @@
+/**
+ * Inicjalizacja Firebase — singleton dla całej aplikacji.
+ *
+ * Eksportuje gotowe instancje serwisów:
+ * - `auth`    — Firebase Authentication (Google OAuth)
+ * - `db`      — Firestore (baza danych)
+ *
+ * Inicjalizacja jest opóźniona (lazy) — pomija SSR jeśli brak zmiennych .env.local,
+ * zapobiegając błędom podczas budowania Next.js.
+ *
+ * Wszystkie zmienne środowiskowe muszą zaczynać się od `NEXT_PUBLIC_` —
+ * są one bezpieczne do użycia po stronie klienta (nie zawierają sekretów serwera).
+ */
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";

@@ -1,10 +1,23 @@
 "use client";
 
+/**
+ * DodajPostModal — uproszczony modal dodawania posta, używany na stronie /mapa.
+ *
+ * UWAGA: To jest STARSZA wersja modala. Główny modal to `DodajPostFeedModal`.
+ * Różnice:
+ * - Brak swipe-to-close, brak LocationPreview, brak drag-and-drop
+ * - Brak obsługi lat/lng (nie zapisuje pinów na mapie)
+ * - Skrócona lista gatunków ryb (10 vs 35 w DodajPostFeedModal)
+ * - Brak i18n (hardcoded po polsku)
+ *
+ * Komponent może być zastąpiony przez DodajPostFeedModal w przyszłości.
+ */
 import { useState, useRef } from "react";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db, auth } from "@/lib/firebase";
 import { uploadToCloudinary } from "@/lib/cloudinary";
 
+/** Skrócona lista gatunków — starsza wersja bez pełnej listy z translations.ts */
 const TYPY_RYB = ["Karp", "Szczupak", "Okoń", "Lin", "Amur", "Sum", "Płoć", "Leszcz", "Sandacz", "Inne"];
 
 interface Props {
@@ -25,17 +38,23 @@ export default function DodajPostModal({ lokalizacja, onClose }: Props) {
   const [dlugoscCm, setDlugoscCm] = useState("");
   const [zdjecia, setZdjecia] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null); // ukryty <input type="file">
 
+  /**
+   * Submit: upload zdjęć do Cloudinary (sekwencyjnie) → addDoc do Firestore.
+   * Guard `if (!auth.currentUser) return` — Firestore i tak odrzuci (reguły bezpieczeństwa),
+   * ale early return zapobiega błędom TypeScript przy dostępie do .uid.
+   * `serverTimestamp()` — timestamp po stronie serwera (niezależny od zegara klienta).
+   */
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!auth.currentUser) return;
+    if (!auth.currentUser) return; // teoretycznie niemożliwe — modal nie pokazuje się dla niezalogowanych
     setLoading(true);
 
     try {
       const zdjeciaUrls: string[] = [];
       for (const plik of zdjecia) {
-        const url = await uploadToCloudinary(plik);
+        const url = await uploadToCloudinary(plik); // upload sekwencyjnie (nie Promise.all)
         zdjeciaUrls.push(url);
       }
 
@@ -48,24 +67,25 @@ export default function DodajPostModal({ lokalizacja, onClose }: Props) {
         nazwa_ryby: nazwaRyby,
         zdjecia: zdjeciaUrls,
         opis,
-        waga_kg: wagaKg ? parseFloat(wagaKg) : null,
+        waga_kg: wagaKg ? parseFloat(wagaKg) : null,    // null = nie podano
         dlugosc_cm: dlugoscCm ? parseFloat(dlugoscCm) : null,
         timestamp: serverTimestamp(),
         likes: 0,
       });
 
-      onClose();
+      onClose(); // zamknij modal po sukcesie
     } finally {
-      setLoading(false);
+      setLoading(false); // zawsze odblokuj przycisk (nawet przy błędzie)
     }
   }
 
+  // Nagłówek: "Stanowisko 3 · Uroczysko Karpiowe" lub tylko "Uroczysko Karpiowe"
   const naglowekLokalizacji = lokalizacja.numer
     ? `Stanowisko ${lokalizacja.numer} · ${lokalizacja.nazwa}`
     : lokalizacja.nazwa;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000] p-4">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1002] p-4">
       <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="p-6">
           <div className="flex justify-between items-center mb-4">
