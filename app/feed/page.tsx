@@ -17,7 +17,7 @@ function FeedContent() {
   const { user } = useAuth();
   const { t } = useLanguage();
   const params = useSearchParams();
-  const focusId = params.get("post");
+  const focusId = params?.get("post");
   const postRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const scrolled = useRef(false);
 

@@ -4,8 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
 import { doc, updateDoc, increment, deleteDoc } from "firebase/firestore";
-import { ref, deleteObject } from "firebase/storage";
-import { db, auth, storage } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 import { useLanguage } from "@/context/LanguageContext";
 import type { Post } from "@/types";
 
@@ -50,15 +49,6 @@ export default function PostCard({ post, authorNick, authorAvatar }: Props) {
     if (!window.confirm(t.post.confirmDelete)) return;
     setDeleted(true);
     try {
-      // Delete photos from Storage
-      for (const url of post.zdjecia ?? []) {
-        try {
-          const storageRef = ref(storage, url);
-          await deleteObject(storageRef);
-        } catch {
-          // ignore if already deleted or wrong ref
-        }
-      }
       await deleteDoc(doc(db, "posty", post.id));
     } catch (err) {
       console.error("Błąd usuwania posta:", err);

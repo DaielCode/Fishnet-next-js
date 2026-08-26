@@ -2,16 +2,9 @@
 
 import { useState, useRef, useEffect } from "react";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, auth, storage } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
+import { uploadToCloudinary } from "@/lib/cloudinary";
 import { useLanguage } from "@/context/LanguageContext";
-
-async function uploadToStorage(plik: File, uid: string): Promise<string> {
-  const sciezka = `posty/${uid}/${Date.now()}_${plik.name}`;
-  const storageRef = ref(storage, sciezka);
-  await uploadBytes(storageRef, plik);
-  return getDownloadURL(storageRef);
-}
 
 const TYPY_RYB = [
   "Karp", "Szczupak", "Okoń", "Lin", "Amur", "Sum", "Płoć", "Leszcz", "Sandacz",
@@ -49,9 +42,11 @@ function StepperInput({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
   const valueRef = useRef(value);
-  valueRef.current = value;
+  useEffect(() => {
+    onChangeRef.current = onChange;
+    valueRef.current = value;
+  });
 
   function change(delta: number) {
     const current = parseFloat(valueRef.current) || 0;
@@ -129,7 +124,7 @@ export default function DodajPostFeedModal({ onClose, lokalizacja }: Props) {
 
       const zdjeciaUrls: string[] = [];
       for (const plik of zdjecia) {
-        const url = await uploadToStorage(plik, uid);
+        const url = await uploadToCloudinary(plik);
         zdjeciaUrls.push(url);
       }
 

@@ -60,11 +60,11 @@ interface LowiskoKlik {
   lng: number;
 }
 
-function MapController({ clusterRef }: { clusterRef: React.MutableRefObject<any> }) {
+function MapController({ clusterRef }: { clusterRef: React.MutableRefObject<L.MarkerClusterGroup | null> }) {
   const map = useMap();
   const params = useSearchParams();
-  const lat = parseFloat(params.get("lat") ?? "");
-  const lng = parseFloat(params.get("lng") ?? "");
+  const lat = parseFloat(params?.get("lat") ?? "");
+  const lng = parseFloat(params?.get("lng") ?? "");
 
   useEffect(() => {
     if (isNaN(lat) || isNaN(lng)) return;
@@ -106,7 +106,7 @@ export default function MapView({ onStanowiskoClick, onLowiskoClick }: Props) {
   const [warstwy, setWarstwy] = useState<WarstwaGeo[]>([]);
   const [postyZPinami, setPostyZPinami] = useState<Post[]>([]);
   const [lightbox, setLightbox] = useState<string | null>(null);
-  const clusterRef = useRef<any>(null);
+  const clusterRef = useRef<L.MarkerClusterGroup | null>(null);
   const { t } = useLanguage();
 
   useEffect(() => {
