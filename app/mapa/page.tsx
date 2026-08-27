@@ -5,7 +5,7 @@
  *
  * Koordynuje trzy komponenty lazy-loaded (ssr: false — wszystkie używają Leaflet):
  * - `MapView`               — interaktywna mapa z łowiskami i stanowiskami
- * - `DodajPostFeedModal`    — modal posta, otwierany po kliknięciu na mapie
+ * - `DodajPostFeedModal`    — modal posta, otwierany po kliknięciu w stanowisko lub łowisko
  * - `ZaproponujLowiskoModal`— modal propozycji łowiska (tylko dla zalogowanych)
  *
  * Stan `lokalizacja` przenosi dane klikniętego miejsca do modalu posta.
@@ -66,21 +66,6 @@ export default function MapaPage() {
     });
   }
 
-  /**
-   * Klik w dowolne miejsce na mapie (poza stanowiskiem/łowiskiem).
-   * Post będzie miał puste lowisko_id i stanowisko_id, tylko współrzędne.
-   */
-  function handleMapClick(lat: number, lng: number) {
-    if (!user) return;
-    setLokalizacja({
-      nazwa: "Mapa",
-      lowisko_id: "",
-      stanowisko_id: "",
-      lat,
-      lng,
-    });
-  }
-
   return (
     <>
       {/*
@@ -101,7 +86,6 @@ export default function MapaPage() {
           <MapView
             onStanowiskoClick={handleStanowiskoClick}
             onLowiskoClick={handleLowiskoClick}
-            onMapClick={handleMapClick}
             zaproponujVisible={!loading && !!user && !isAdmin} // tylko zalogowani non-admini
             onZaproponuj={() => setPropozycjaOpen(true)}
           />
