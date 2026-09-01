@@ -12,7 +12,7 @@
  * 2. Mapa Leaflet pokazuje zbiorniki pobrane z Overpass API
  * 3. Kliknij zbiornik aby go wybrać (Shift+klik = wybierz kilka)
  * 4. Wiele zbiorników zostaje scalone w jeden MultiPolygon
- * 5. Overpass API: próba 2 zweryfikowanych mirrorów (oficjalna instancja) z timeoutem 6s każdy
+ * 5. Overpass API: próba 2 zweryfikowanych mirrorów (oficjalna instancja) z timeoutem 35s każdy
  *
  * Źródła zewnętrzne (bez autoryzacji):
  * - Overpass API — geometria zbiorników z OSM
@@ -238,6 +238,9 @@ const OVERPASS_MIRRORS = [
   "https://z.overpass-api.de/api/interpreter",
 ];
 
+/** Błąd oznaczający wyczerpany limit zapytań Overpass — pokazujemy inny komunikat. */
+class OverpassRateLimitError extends Error {}
+
 /**
  * Pobiera zbiorniki wodne z Overpass API dla aktualnego widoku mapy (bbox).
  *
@@ -246,15 +249,18 @@ const OVERPASS_MIRRORS = [
  * - `relation` = zbiornik z wyspami (multipolygon)
  * `out geom` — Overpass zwraca pełną geometrię (nie tylko ID)
  *
- * Mechanizm retry z timeout:
- * - Każdy mirror ma 6 sekund na odpowiedź (AbortController)
- * - Jeśli mirror nie odpowie → próbujemy następny
- * - Jeśli wszystkie zawiodą → rzucamy ostatni błąd
+ * Timeout: 35s na mirror. To NIE jest przesada — realne zapytania do publicznego
+ * Overpassa dla zwykłego obszaru mapy trwają 20-30 sekund (zmierzone). Wcześniejsza,
+ * dużo krótsza wartość przerywała każde zapytanie zanim serwer zdążył odpowiedzieć,
+ * przez co użytkownik zawsze widział błąd mimo że API działało poprawnie.
  *
- * Deduplikacja: Map(osmId → zbiornik) usuwa duplikaty gdy te same zbiorniki
- * pojawią się w kilku mirrorach (teoretycznie niemożliwe, ale dla pewności).
+ * Limit Overpassa to 2 równoległe zapytania na adres IP. Po jego przekroczeniu API
+ * odpowiada błędem BEZ nagłówków CORS, co w przeglądarce objawia się jako ogólne
+ * "Failed to fetch" (bez czytelnej przyczyny) — dlatego wykrywamy 429 osobno,
+ * a `externalSignal` pozwala anulować poprzednie, już niepotrzebne zapytanie
+ * i natychmiast zwolnić zajmowany przez nie slot.
  */
-async function loadZbiornikiFromBbox(map: L.Map): Promise<OsmZbiornik[]> {
+async function loadZbiornikiFromBbox(map: L.Map, externalSignal?: AbortSignal): Promise<OsmZbiornik[]> {
   const bounds = map.getBounds();
   // Overpass bbox format: south,west,north,east (odwrotnie niż GeoJSON [w,s,e,n]!)
   const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
@@ -262,10 +268,15 @@ async function loadZbiornikiFromBbox(map: L.Map): Promise<OsmZbiornik[]> {
 
   let lastError: unknown;
   for (const mirror of OVERPASS_MIRRORS) {
+    if (externalSignal?.aborted) throw new DOMException("Aborted", "AbortError");
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000); // 6s timeout na mirror — krócej niż 8s, żeby martwy mirror nie zjadał zbyt dużo czasu
+    // Anulowanie z zewnątrz (nowsze zapytanie) przerywa również ten fetch
+    const onExternalAbort = () => controller.abort();
+    externalSignal?.addEventListener("abort", onExternalAbort);
+    const timer = setTimeout(() => controller.abort(), 35000); // 35s — realne zapytania trwają 20-30s
     try {
       const res = await fetch(mirror, { method: "POST", body: overpassQuery, signal: controller.signal });
+      if (res.status === 429) throw new OverpassRateLimitError("rate limit");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const parsed = (data.elements as unknown[])
@@ -274,9 +285,12 @@ async function loadZbiornikiFromBbox(map: L.Map): Promise<OsmZbiornik[]> {
       // Deduplikacja po osmId na wypadek duplikatów w danych
       return Array.from(new Map(parsed.map((z) => [z.osmId, z])).values());
     } catch (err) {
+      // Anulowanie przez nowsze zapytanie — nie próbujemy kolejnych mirrorów
+      if (externalSignal?.aborted) throw err;
       lastError = err; // zapisz błąd i spróbuj następny mirror
     } finally {
-      clearTimeout(timer); // zawsze czyść timer niezależnie od wyniku
+      clearTimeout(timer);
+      externalSignal?.removeEventListener("abort", onExternalAbort);
     }
   }
   throw lastError; // wszystkie mirrory zawiodły
@@ -395,6 +409,9 @@ export default function OsmLowiskoPicker({ onConfirm, onCancel }: Props) {
   // wynik szybszego, który już się poprawnie załadował. Stosujemy tylko wynik
   // najnowszego wywołania.
   const requestIdRef = useRef(0);
+  // Kontroler do anulowania trwającego zapytania Overpass gdy startuje nowsze —
+  // zwalnia zajęty slot limitu (Overpass dopuszcza tylko 2 na adres IP).
+  const loadAbortRef = useRef<AbortController | null>(null);
 
   /**
    * Callback gdy Leaflet zakończy inicjalizację mapy.
@@ -429,11 +446,19 @@ export default function OsmLowiskoPicker({ onConfirm, onCancel }: Props) {
   async function triggerLoadZbiorniki() {
     if (!mapRef.current) return;
     const myRequestId = ++requestIdRef.current; // ten fetch jest teraz "najnowszy"
+
+    // Anuluj poprzednie zapytanie — bez tego wciąż zajmowałoby jeden z tylko
+    // DWÓCH slotów, które Overpass przydziela na adres IP, i kolejne zapytania
+    // dostawałyby błąd limitu (widoczny w przeglądarce jako zwykłe "Failed to fetch").
+    loadAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
+
     setMessage(null);
     setLoadingZbiorniki(true);
     setSelectedIds(new Set());
     try {
-      const unique = await loadZbiornikiFromBbox(mapRef.current);
+      const unique = await loadZbiornikiFromBbox(mapRef.current, controller.signal);
       if (myRequestId !== requestIdRef.current) return; // w międzyczasie wystartował nowszy fetch — ignorujemy ten wynik
       setZbiorniki(unique);
       if (unique.length === 0) {
@@ -441,9 +466,14 @@ export default function OsmLowiskoPicker({ onConfirm, onCancel }: Props) {
       } else {
         setMessage({ type: "success", text: `Znaleziono ${unique.length} zbiorników — kliknij, aby wybrać. Shift+klik = wybierz kilka.` });
       }
-    } catch {
+    } catch (err) {
       if (myRequestId !== requestIdRef.current) return;
-      setMessage({ type: "error", text: "Błąd pobierania danych z Overpass API. Spróbuj ponownie." });
+      if ((err as Error)?.name === "AbortError") return; // anulowane celowo — bez komunikatu
+      setMessage(
+        err instanceof OverpassRateLimitError
+          ? { type: "error", text: "Przekroczono limit zapytań OpenStreetMap. Odczekaj chwilę i spróbuj ponownie." }
+          : { type: "error", text: "Błąd pobierania danych z Overpass API. Spróbuj ponownie." }
+      );
     } finally {
       if (myRequestId === requestIdRef.current) setLoadingZbiorniki(false);
     }
