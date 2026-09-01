@@ -19,7 +19,7 @@
  * - Photon (Komoot) — autocomplete nazw miejsc
  * - Nominatim (OSM) — reverse geocoding (automatyczna nazwa łowiska)
  */
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { POLSKIE_MIASTA } from "@/lib/miejscowosci";
 import { MapContainer, TileLayer, GeoJSON as GeoJSONLayer, useMap } from "react-leaflet";
 import L from "leaflet";
@@ -297,6 +297,14 @@ function MapContent({
   const onMoveEndRef = useRef(onMoveEnd);
   onMoveEndRef.current = onMoveEnd;
 
+  // Stabilizujemy FeatureCollection per zbiornik — bez tego nowy obiekt {type:"FeatureCollection",...}
+  // powstawałby przy KAŻDYM renderze (np. przy toggle selectedIds), co zmuszało GeoJSON
+  // z react-leaflet do przebudowy warstwy nawet gdy dane faktycznie się nie zmieniły.
+  const featureCollections = useMemo(
+    () => zbiorniki.map((z): GeoJSON.FeatureCollection => ({ type: "FeatureCollection", features: [z.geojson] })),
+    [zbiorniki]
+  );
+
   useEffect(() => { onMapReady(map); }, [map, onMapReady]);
 
   useEffect(() => {
@@ -315,12 +323,12 @@ function MapContent({
 
   return (
     <>
-      {zbiorniki.map((z) => {
+      {zbiorniki.map((z, i) => {
         const isSelected = selectedIds.has(z.osmId);
-        const fc: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [z.geojson] };
+        const fc = featureCollections[i];
         return (
           <GeoJSONLayer
-            key={`${z.osmId}_${isSelected}`}
+            key={z.osmId}
             data={fc}
             style={{
               color: isSelected ? "#f59e0b" : "#3b82f6",
