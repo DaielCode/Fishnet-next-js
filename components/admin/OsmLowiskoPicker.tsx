@@ -12,7 +12,7 @@
  * 2. Mapa Leaflet pokazuje zbiorniki pobrane z Overpass API
  * 3. Kliknij zbiornik aby go wybrać (Shift+klik = wybierz kilka)
  * 4. Wiele zbiorników zostaje scalone w jeden MultiPolygon
- * 5. Overpass API: próba 3 mirrorów z timeoutem 8s każdy
+ * 5. Overpass API: próba 3 mirrorów z timeoutem 6s każdy
  *
  * Źródła zewnętrzne (bez autoryzacji):
  * - Overpass API — geometria zbiorników z OSM
@@ -223,12 +223,16 @@ async function fetchAutoName(zbiornik: OsmZbiornik): Promise<string> {
 
 /**
  * Lista mirrorów Overpass API — próbowane po kolei aż jeden odpowie.
- * Overpass-api.de bywa przeciążony, dlatego najpierw próbujemy szybsze mirrory.
+ * Kolejność ustalona po realnym sprawdzeniu (2026-09-01): overpass.osm.ch był
+ * najszybszy i najbardziej stabilny, overpass-api.de to oficjalna instancja
+ * (wolniejsza, czasem przeciążona, ale trzymana jako fallback). Usunięto
+ * maps.mail.ru — przy sprawdzaniu w ogóle nie odpowiadał (pełny timeout, zero
+ * szans na sukces), co tylko wydłużało czas oczekiwania na kolejny mirror.
  */
 const OVERPASS_MIRRORS = [
-  "https://overpass.kumi.systems/api/interpreter",
-  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "https://overpass.osm.ch/api/interpreter",
   "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
 ];
 
 /**
@@ -240,7 +244,7 @@ const OVERPASS_MIRRORS = [
  * `out geom` — Overpass zwraca pełną geometrię (nie tylko ID)
  *
  * Mechanizm retry z timeout:
- * - Każdy mirror ma 8 sekund na odpowiedź (AbortController)
+ * - Każdy mirror ma 6 sekund na odpowiedź (AbortController)
  * - Jeśli mirror nie odpowie → próbujemy następny
  * - Jeśli wszystkie zawiodą → rzucamy ostatni błąd
  *
@@ -256,7 +260,7 @@ async function loadZbiornikiFromBbox(map: L.Map): Promise<OsmZbiornik[]> {
   let lastError: unknown;
   for (const mirror of OVERPASS_MIRRORS) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000); // 8s timeout na mirror
+    const timer = setTimeout(() => controller.abort(), 6000); // 6s timeout na mirror — krócej niż 8s, żeby martwy mirror nie zjadał zbyt dużo czasu
     try {
       const res = await fetch(mirror, { method: "POST", body: overpassQuery, signal: controller.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
