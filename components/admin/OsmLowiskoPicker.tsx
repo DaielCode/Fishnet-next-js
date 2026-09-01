@@ -12,7 +12,7 @@
  * 2. Mapa Leaflet pokazuje zbiorniki pobrane z Overpass API
  * 3. Kliknij zbiornik aby go wybrać (Shift+klik = wybierz kilka)
  * 4. Wiele zbiorników zostaje scalone w jeden MultiPolygon
- * 5. Overpass API: próba 3 mirrorów z timeoutem 6s każdy
+ * 5. Overpass API: próba 2 zweryfikowanych mirrorów (oficjalna instancja) z timeoutem 6s każdy
  *
  * Źródła zewnętrzne (bez autoryzacji):
  * - Overpass API — geometria zbiorników z OSM
@@ -223,16 +223,19 @@ async function fetchAutoName(zbiornik: OsmZbiornik): Promise<string> {
 
 /**
  * Lista mirrorów Overpass API — próbowane po kolei aż jeden odpowie.
- * Kolejność ustalona po realnym sprawdzeniu (2026-09-01): overpass.osm.ch był
- * najszybszy i najbardziej stabilny, overpass-api.de to oficjalna instancja
- * (wolniejsza, czasem przeciążona, ale trzymana jako fallback). Usunięto
- * maps.mail.ru — przy sprawdzaniu w ogóle nie odpowiadał (pełny timeout, zero
- * szans na sukces), co tylko wydłużało czas oczekiwania na kolejny mirror.
+ *
+ * UWAGA: overpass.osm.ch (dodany wcześniej po sprawdzeniu tylko szybkości/statusu
+ * HTTP) okazał się zwracać pustą/niepoprawną odpowiedź dla realnych zapytań spoza
+ * Szwajcarii (domena .ch — to instancja społeczności OSM Switzerland, prawdopodobnie
+ * ograniczona regionalnie) — dlatego wyglądało to na "szybką odpowiedź, ale zawsze
+ * brak zbiorników". Podobnie zawiodły kumi.systems, private.coffee, openstreetmap.ru
+ * i lz4.overpass-api.de. Zweryfikowano FAKTYCZNĄ zawartość odpowiedzi (nie tylko
+ * status HTTP) dla obu poniższych — oba to oficjalna instancja Overpass (różne
+ * węzły load-balancera), zwracają pełny, globalny zbiór danych OSM.
  */
 const OVERPASS_MIRRORS = [
-  "https://overpass.osm.ch/api/interpreter",
   "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
+  "https://z.overpass-api.de/api/interpreter",
 ];
 
 /**
