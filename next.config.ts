@@ -10,9 +10,9 @@ import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
 
 const nextConfig: NextConfig = {
-  // Generuj statyczne pliki HTML zamiast serwera Node.js
-  // Wymagane dla Firebase Hosting (serwuje tylko pliki statyczne)
-  output: "export",
+  // Aplikacja NIE jest już budowana jako statyczny eksport (output: "export").
+  // Powód: potrzebujemy serwerowego proxy /api/overpass — przeglądarka nie może
+  // odpytywać Overpass API bezpośrednio (błędy CORS przy odpowiedziach o przeciążeniu).
   async headers() {
     return [
       {
@@ -28,8 +28,8 @@ const nextConfig: NextConfig = {
   },
 
   images: {
-    // Wyłącza optymalizację obrazów Next.js (Image Optimization API)
-    // Wymagane przy `output: "export"` — optymalizacja wymaga serwera
+    // Zostawiamy wyłączoną optymalizację obrazów — zdjęcia z Cloudinary są już
+    // zoptymalizowane po ich stronie, a to nie zużywa limitu Image Optimization na Vercel
     unoptimized: true,
 
     // Dozwolone zewnętrzne domeny dla komponentu <Image>

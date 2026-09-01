@@ -12,7 +12,7 @@
  * 2. Mapa Leaflet pokazuje zbiorniki pobrane z Overpass API
  * 3. Kliknij zbiornik aby go wybrać (Shift+klik = wybierz kilka)
  * 4. Wiele zbiorników zostaje scalone w jeden MultiPolygon
- * 5. Overpass API: próba 2 zweryfikowanych mirrorów (oficjalna instancja) z timeoutem 35s każdy
+ * 5. Overpass API: przez własne serwerowe proxy /api/overpass (omija problem CORS)
  *
  * Źródła zewnętrzne (bez autoryzacji):
  * - Overpass API — geometria zbiorników z OSM
@@ -221,44 +221,33 @@ async function fetchAutoName(zbiornik: OsmZbiornik): Promise<string> {
 
 // ─── Ładowanie zbiorników z Overpass ─────────────────────────────────────────
 
-/**
- * Lista mirrorów Overpass API — próbowane po kolei aż jeden odpowie.
- *
- * UWAGA: overpass.osm.ch (dodany wcześniej po sprawdzeniu tylko szybkości/statusu
- * HTTP) okazał się zwracać pustą/niepoprawną odpowiedź dla realnych zapytań spoza
- * Szwajcarii (domena .ch — to instancja społeczności OSM Switzerland, prawdopodobnie
- * ograniczona regionalnie) — dlatego wyglądało to na "szybką odpowiedź, ale zawsze
- * brak zbiorników". Podobnie zawiodły kumi.systems, private.coffee, openstreetmap.ru
- * i lz4.overpass-api.de. Zweryfikowano FAKTYCZNĄ zawartość odpowiedzi (nie tylko
- * status HTTP) dla obu poniższych — oba to oficjalna instancja Overpass (różne
- * węzły load-balancera), zwracają pełny, globalny zbiór danych OSM.
- */
-const OVERPASS_MIRRORS = [
-  "https://overpass-api.de/api/interpreter",
-  "https://z.overpass-api.de/api/interpreter",
-];
-
 /** Błąd oznaczający wyczerpany limit zapytań Overpass — pokazujemy inny komunikat. */
 class OverpassRateLimitError extends Error {}
 
 /**
- * Pobiera zbiorniki wodne z Overpass API dla aktualnego widoku mapy (bbox).
+ * Własne proxy na serwerze (app/api/overpass/route.ts) zamiast bezpośredniego
+ * odpytywania Overpassa z przeglądarki. Powód: przy odpowiedziach o przeciążeniu
+ * Overpass nie zwraca nagłówków CORS, więc przeglądarka blokowała odpowiedź i
+ * pokazywała tylko ogólne "Failed to fetch". Żądanie z serwera nie podlega CORS.
+ */
+const OVERPASS_PROXY = "/api/overpass";
+
+/**
+ * Pobiera zbiorniki wodne dla aktualnego widoku mapy (bbox) przez własne
+ * serwerowe proxy `/api/overpass` (patrz komentarz przy OVERPASS_PROXY).
  *
  * Zapytanie Overpass szuka elementów z tagiem `natural=water`:
  * - `way` = zwykły zbiornik (polygon)
  * - `relation` = zbiornik z wyspami (multipolygon)
  * `out geom` — Overpass zwraca pełną geometrię (nie tylko ID)
  *
- * Timeout: 35s na mirror. To NIE jest przesada — realne zapytania do publicznego
- * Overpassa dla zwykłego obszaru mapy trwają 20-30 sekund (zmierzone). Wcześniejsza,
- * dużo krótsza wartość przerywała każde zapytanie zanim serwer zdążył odpowiedzieć,
+ * Timeout: 45s. To NIE jest przesada — realne zapytania do publicznego Overpassa
+ * dla zwykłego obszaru mapy trwają 20-30 sekund (zmierzone). Wcześniejsza, dużo
+ * krótsza wartość przerywała każde zapytanie zanim serwer zdążył odpowiedzieć,
  * przez co użytkownik zawsze widział błąd mimo że API działało poprawnie.
  *
- * Limit Overpassa to 2 równoległe zapytania na adres IP. Po jego przekroczeniu API
- * odpowiada błędem BEZ nagłówków CORS, co w przeglądarce objawia się jako ogólne
- * "Failed to fetch" (bez czytelnej przyczyny) — dlatego wykrywamy 429 osobno,
- * a `externalSignal` pozwala anulować poprzednie, już niepotrzebne zapytanie
- * i natychmiast zwolnić zajmowany przez nie slot.
+ * `externalSignal` pozwala anulować poprzednie, już niepotrzebne zapytanie
+ * (np. gdy użytkownik dalej przesuwa mapę) zamiast czekać na jego zakończenie.
  */
 async function loadZbiornikiFromBbox(map: L.Map, externalSignal?: AbortSignal): Promise<OsmZbiornik[]> {
   const bounds = map.getBounds();
@@ -266,34 +255,28 @@ async function loadZbiornikiFromBbox(map: L.Map, externalSignal?: AbortSignal): 
   const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
   const overpassQuery = `[out:json][timeout:30];(way["natural"="water"](${bbox});relation["natural"="water"](${bbox}););out geom;`;
 
-  let lastError: unknown;
-  for (const mirror of OVERPASS_MIRRORS) {
-    if (externalSignal?.aborted) throw new DOMException("Aborted", "AbortError");
-    const controller = new AbortController();
-    // Anulowanie z zewnątrz (nowsze zapytanie) przerywa również ten fetch
-    const onExternalAbort = () => controller.abort();
-    externalSignal?.addEventListener("abort", onExternalAbort);
-    const timer = setTimeout(() => controller.abort(), 35000); // 35s — realne zapytania trwają 20-30s
-    try {
-      const res = await fetch(mirror, { method: "POST", body: overpassQuery, signal: controller.signal });
-      if (res.status === 429) throw new OverpassRateLimitError("rate limit");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const parsed = (data.elements as unknown[])
-        .map((el) => parseOverpassElement(el as Record<string, unknown>))
-        .filter(Boolean) as OsmZbiornik[]; // filter(Boolean) usuwa null (nievalid elementy)
-      // Deduplikacja po osmId na wypadek duplikatów w danych
-      return Array.from(new Map(parsed.map((z) => [z.osmId, z])).values());
-    } catch (err) {
-      // Anulowanie przez nowsze zapytanie — nie próbujemy kolejnych mirrorów
-      if (externalSignal?.aborted) throw err;
-      lastError = err; // zapisz błąd i spróbuj następny mirror
-    } finally {
-      clearTimeout(timer);
-      externalSignal?.removeEventListener("abort", onExternalAbort);
-    }
+  const controller = new AbortController();
+  const onExternalAbort = () => controller.abort();
+  externalSignal?.addEventListener("abort", onExternalAbort);
+  const timer = setTimeout(() => controller.abort(), 45000);
+  try {
+    const res = await fetch(OVERPASS_PROXY, {
+      method: "POST",
+      body: overpassQuery,
+      signal: controller.signal,
+    });
+    if (res.status === 429) throw new OverpassRateLimitError("rate limit");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const parsed = (data.elements as unknown[])
+      .map((el) => parseOverpassElement(el as Record<string, unknown>))
+      .filter(Boolean) as OsmZbiornik[]; // filter(Boolean) usuwa null (nievalid elementy)
+    // Deduplikacja po osmId na wypadek duplikatów w danych
+    return Array.from(new Map(parsed.map((z) => [z.osmId, z])).values());
+  } finally {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", onExternalAbort);
   }
-  throw lastError; // wszystkie mirrory zawiodły
 }
 
 // ─── Wewnętrzny komponent mapy ────────────────────────────────────────────────
