@@ -374,6 +374,12 @@ export default function OsmLowiskoPicker({ onConfirm, onCancel }: Props) {
   const MIN_ZOOM = 12;
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // requestIdRef — chroni przed race condition: handleMapReady i handleMoveEnd
+  // mogą wywołać triggerLoadZbiorniki() niemal jednocześnie (np. zaraz po starcie
+  // mapy), a wolniejszy request (retry po mirrorach, do 24s) mógłby nadpisać
+  // wynik szybszego, który już się poprawnie załadował. Stosujemy tylko wynik
+  // najnowszego wywołania.
+  const requestIdRef = useRef(0);
 
   /**
    * Callback gdy Leaflet zakończy inicjalizację mapy.
@@ -407,11 +413,13 @@ export default function OsmLowiskoPicker({ onConfirm, onCancel }: Props) {
 
   async function triggerLoadZbiorniki() {
     if (!mapRef.current) return;
+    const myRequestId = ++requestIdRef.current; // ten fetch jest teraz "najnowszy"
     setMessage(null);
     setLoadingZbiorniki(true);
     setSelectedIds(new Set());
     try {
       const unique = await loadZbiornikiFromBbox(mapRef.current);
+      if (myRequestId !== requestIdRef.current) return; // w międzyczasie wystartował nowszy fetch — ignorujemy ten wynik
       setZbiorniki(unique);
       if (unique.length === 0) {
         setMessage({ type: "info", text: "Brak zbiorników w tym obszarze. Przybliż mapę lub zmień lokalizację." });
@@ -419,9 +427,10 @@ export default function OsmLowiskoPicker({ onConfirm, onCancel }: Props) {
         setMessage({ type: "success", text: `Znaleziono ${unique.length} zbiorników — kliknij, aby wybrać. Shift+klik = wybierz kilka.` });
       }
     } catch {
+      if (myRequestId !== requestIdRef.current) return;
       setMessage({ type: "error", text: "Błąd pobierania danych z Overpass API. Spróbuj ponownie." });
     } finally {
-      setLoadingZbiorniki(false);
+      if (myRequestId === requestIdRef.current) setLoadingZbiorniki(false);
     }
   }
 
