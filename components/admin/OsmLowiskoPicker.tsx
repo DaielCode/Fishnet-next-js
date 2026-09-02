@@ -9,7 +9,9 @@
  *
  * Przepływ działania:
  * 1. Wyszukaj miejscowość (autocomplete z POLSKIE_MIASTA + Photon API)
- * 2. Mapa Leaflet pokazuje zbiorniki pobrane z Overpass API
+ * 2. Kliknij „Załaduj zbiorniki" — mapa pokaże zbiorniki z Overpass API
+ *    (pobieranie NIE startuje samo przy ruchu mapy — chroni to przed
+ *    wyczerpaniem limitu zapytań Overpassa)
  * 3. Kliknij zbiornik aby go wybrać (Shift+klik = wybierz kilka)
  * 4. Wiele zbiorników zostaje scalone w jeden MultiPolygon
  * 5. Overpass API: przez własne serwerowe proxy /api/overpass (omija problem CORS)
@@ -251,8 +253,22 @@ const OVERPASS_PROXY = "/api/overpass";
  */
 async function loadZbiornikiFromBbox(map: L.Map, externalSignal?: AbortSignal): Promise<OsmZbiornik[]> {
   const bounds = map.getBounds();
+  /**
+   * Zaokrąglamy bbox NA ZEWNĄTRZ do siatki 0,01° (~1 km).
+   *
+   * Bez tego każde, nawet minimalne przesunięcie mapy dawało inny bbox co do
+   * kilkunastu miejsc po przecinku, więc serwerowy cache praktycznie nigdy nie
+   * trafiał — każde przesunięcie = nowe zapytanie do Overpassa i szybsze zużycie
+   * jego limitu. Zaokrąglenie w GÓRĘ (floor dla min, ceil dla max) gwarantuje,
+   * że pobrany obszar zawsze pokrywa to, co użytkownik faktycznie widzi.
+   */
+  const GRID = 0.01;
+  const south = Math.floor(bounds.getSouth() / GRID) * GRID;
+  const west = Math.floor(bounds.getWest() / GRID) * GRID;
+  const north = Math.ceil(bounds.getNorth() / GRID) * GRID;
+  const east = Math.ceil(bounds.getEast() / GRID) * GRID;
   // Overpass bbox format: south,west,north,east (odwrotnie niż GeoJSON [w,s,e,n]!)
-  const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
+  const bbox = `${south.toFixed(2)},${west.toFixed(2)},${north.toFixed(2)},${east.toFixed(2)}`;
   const overpassQuery = `[out:json][timeout:30];(way["natural"="water"](${bbox});relation["natural"="water"](${bbox}););out geom;`;
 
   const controller = new AbortController();
@@ -385,11 +401,9 @@ export default function OsmLowiskoPicker({ onConfirm, onCancel }: Props) {
   const mapRef = useRef<L.Map | null>(null);
   const MIN_ZOOM = 12;
 
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // requestIdRef — chroni przed race condition: handleMapReady i handleMoveEnd
-  // mogą wywołać triggerLoadZbiorniki() niemal jednocześnie (np. zaraz po starcie
-  // mapy), a wolniejszy request (retry po mirrorach, do 24s) mógłby nadpisać
-  // wynik szybszego, który już się poprawnie załadował. Stosujemy tylko wynik
+  // requestIdRef — chroni przed race condition, gdy użytkownik kliknie przycisk
+  // ponownie zanim poprzednie zapytanie się zakończy: wolniejsza, wcześniejsza
+  // odpowiedź mogłaby nadpisać wynik tej nowszej. Stosujemy tylko wynik
   // najnowszego wywołania.
   const requestIdRef = useRef(0);
   // Kontroler do anulowania trwającego zapytania Overpass gdy startuje nowsze —
@@ -397,37 +411,41 @@ export default function OsmLowiskoPicker({ onConfirm, onCancel }: Props) {
   const loadAbortRef = useRef<AbortController | null>(null);
 
   /**
-   * Callback gdy Leaflet zakończy inicjalizację mapy.
-   * Zapisujemy referencję do instancji L.Map i ładujemy zbiorniki jeśli zoom jest OK.
+   * Callback gdy Leaflet zakończy inicjalizację mapy — zapisujemy referencję
+   * do instancji L.Map. Świadomie NIE pobieramy tu zbiorników automatycznie:
+   * zapytania startują wyłącznie po kliknięciu przycisku (patrz handleMoveEnd).
    */
   const handleMapReady = useCallback((map: L.Map) => {
     mapRef.current = map;
-    // Krótkie opóźnienie żeby tiles zdążyły się załadować przed pierwszym fetch
-    if (map.getZoom() >= MIN_ZOOM) {
-      setTimeout(() => triggerLoadZbiorniki(), 500);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   /**
-   * Callback po każdym ruchu mapy (pan/zoom). Debounced 2s — nie chcemy
-   * wysyłać zapytania do Overpass po każdym pikselu przesunięcia mapy.
-   * Poniżej MIN_ZOOM pokazujemy informację zamiast ładować (za dużo danych).
+   * Callback po każdym ruchu mapy (pan/zoom).
+   *
+   * Wcześniej to miejsce automatycznie wysyłało zapytanie do Overpassa (z 2s
+   * debounce). Zostało to wyłączone: Overpass dopuszcza tylko 2 równoległe
+   * zapytania na adres IP, a każde przesunięcie mapy generowało kolejne —
+   * limit wyczerpywał się błyskawicznie i użytkownik dostawał błąd zamiast
+   * danych. Teraz pobieranie startuje wyłącznie po świadomym kliknięciu
+   * przycisku "Załaduj zbiorniki", a tutaj jedynie podpowiadamy, co zrobić.
    */
   const handleMoveEnd = useCallback(() => {
     if (!mapRef.current) return;
-    if (mapRef.current.getZoom() < MIN_ZOOM) {
-      setMessage({ type: "info", text: `Przybliż mapę (zoom ≥ ${MIN_ZOOM}), żeby automatycznie załadować zbiorniki.` });
-      return;
-    }
-    // Debounce: anuluj poprzedni timer i ustaw nowy 2s
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      triggerLoadZbiorniki();
-    }, 2000);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    setMessage(
+      mapRef.current.getZoom() < MIN_ZOOM
+        ? { type: "info", text: `Przybliż mapę (zoom ≥ ${MIN_ZOOM}), a potem kliknij „Załaduj zbiorniki”.` }
+        : { type: "info", text: "Kliknij „Załaduj zbiorniki”, aby pobrać zbiorniki z tego obszaru." }
+    );
+  }, []);
 
   async function triggerLoadZbiorniki() {
     if (!mapRef.current) return;
+    // Przy zbyt oddalonej mapie obszar jest ogromny — Overpass i tak odpowiedziałby
+    // błędem przeciążenia, więc nie marnujemy na to zapytania z limitu.
+    if (mapRef.current.getZoom() < MIN_ZOOM) {
+      setMessage({ type: "info", text: `Przybliż mapę (zoom ≥ ${MIN_ZOOM}), żeby pobrać zbiorniki — obszar jest teraz zbyt duży.` });
+      return;
+    }
     const myRequestId = ++requestIdRef.current; // ten fetch jest teraz "najnowszy"
 
     // Anuluj poprzednie zapytanie — bez tego wciąż zajmowałoby jeden z tylko

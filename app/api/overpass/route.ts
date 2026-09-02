@@ -43,11 +43,57 @@ export const maxDuration = 60;
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 2000;
 
+/**
+ * Cache odpowiedzi w pamięci procesu.
+ *
+ * Dwa powody, dla których jest tu ważny:
+ * 1. Limit Overpassa (2 równoległe zapytania na IP) dotyczy teraz serwera, a więc
+ *    jest WSPÓLNY dla wszystkich użytkowników aplikacji — bez cache kilka osób
+ *    przeglądających mapę naraz wyczerpałoby go natychmiast.
+ * 2. Overpass bywa chwilowo niedostępny (504). Wtedy zamiast pokazywać błąd
+ *    oddajemy ostatnie znane dane dla tego obszaru (stale-if-error).
+ *
+ * To cache best-effort: instancje serwerless bywają wygaszane, więc czasem
+ * będzie pusty. Klucz to treść zapytania — klient zaokrągla bbox do siatki,
+ * dzięki czemu drobne przesunięcia mapy trafiają w ten sam wpis.
+ */
+const CACHE = new Map<string, { body: string; at: number }>();
+const FRESH_MS = 10 * 60 * 1000;      // 10 min — w tym czasie oddajemy z cache bez pytania Overpassa
+const STALE_MAX_MS = 24 * 60 * 60 * 1000; // 24 h — tak stare dane oddamy tylko awaryjnie, gdy Overpass nie działa
+const CACHE_MAX_ENTRIES = 100;
+
+function readCache(key: string, maxAge: number): string | null {
+  const hit = CACHE.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > maxAge) return null;
+  return hit.body;
+}
+
+function writeCache(key: string, body: string) {
+  // Prosty limit rozmiaru — usuwamy najstarszy wpis (Map zachowuje kolejność wstawiania)
+  if (CACHE.size >= CACHE_MAX_ENTRIES) {
+    const oldest = CACHE.keys().next().value;
+    if (oldest) CACHE.delete(oldest);
+  }
+  CACHE.set(key, { body, at: Date.now() });
+}
+
+function jsonResponse(body: string, source: "live" | "cache" | "stale") {
+  return new NextResponse(body, {
+    status: 200,
+    headers: { "Content-Type": "application/json", "X-Data-Source": source },
+  });
+}
+
 export async function POST(req: NextRequest) {
   const query = await req.text();
   if (!query) {
     return NextResponse.json({ error: "Brak zapytania." }, { status: 400 });
   }
+
+  // Świeży cache — oddajemy od razu, bez obciążania Overpassa
+  const fresh = readCache(query, FRESH_MS);
+  if (fresh) return jsonResponse(fresh, "cache");
 
   let lastStatus = 0;
   // Publiczny Overpass bywa chwilowo przeciążony i odpowiada wtedy 504/503.
@@ -70,16 +116,18 @@ export async function POST(req: NextRequest) {
         clearTimeout(timer);
 
         if (res.ok) {
+          const body = await res.text();
+          writeCache(query, body);
           // Przekazujemy odpowiedź bez zmian — parsowanie zostaje po stronie klienta
-          return new NextResponse(await res.text(), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          });
+          return jsonResponse(body, "live");
         }
 
         lastStatus = res.status;
         // 429 = wyczerpany limit zapytań — ponawianie nic nie da, przerywamy od razu
         if (res.status === 429) {
+          // Zanim pokażemy błąd — spróbujmy oddać starsze dane dla tego obszaru
+          const stale = readCache(query, STALE_MAX_MS);
+          if (stale) return jsonResponse(stale, "stale");
           return NextResponse.json({ error: "rate_limit" }, { status: 429 });
         }
       } catch {
@@ -87,6 +135,12 @@ export async function POST(req: NextRequest) {
       }
     }
   }
+
+  // Overpass nie odpowiedział — ostatnia deska ratunku: starsze dane z cache.
+  // Lepiej pokazać zbiorniki sprzed kilku godzin niż komunikat o błędzie:
+  // granice jezior praktycznie się nie zmieniają, więc dane pozostają użyteczne.
+  const stale = readCache(query, STALE_MAX_MS);
+  if (stale) return jsonResponse(stale, "stale");
 
   return NextResponse.json(
     { error: "overpass_unavailable", upstreamStatus: lastStatus },
